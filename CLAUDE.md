@@ -21,7 +21,7 @@ Clean up after yourself: when a test run, build, watcher, background job, contai
 Bugboard status follows the work, so the owner can see it:
 - `in_progress` the moment work on a task starts (including by a subagent).
 - `review` once it is built and committed, but not yet deployed.
-- `done_devnet` or `done_testnet` once it is live on that network.
+- `done_devnet` once it is live on devnet; `done` (the column shown as "Done Testnet") once it is live on testnet.
 
 Operational constraints:
 - **Rolling upgrades only** — never restart multiple RQLite voters at once (Raft quorum).
