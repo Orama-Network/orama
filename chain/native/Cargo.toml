@@ -4,7 +4,7 @@
 # collide, so both are built as rlibs of this crate and archived once. wasmvm is not vendored: build.sh
 # copies libwasmvm from the module cache at the version chain/go.mod pins (v3.0.7, checked against
 # go.sum by the Go toolchain) into vendor/wasmvm, and Cargo.lock pins the crates. Nothing prebuilt is
-# downloaded.
+# downloaded. One crate of libwasmvm's tree is patched in from this directory: see [patch.crates-io].
 [package]
 name = "orama-native"
 version = "0.1.0"
@@ -18,6 +18,13 @@ crate-type = ["staticlib"]
 [dependencies]
 wasmvm = { path = "vendor/wasmvm" }
 orama-orchard-ffi = { path = "../x/shielded/orchardffi" }
+
+# cosmwasm-crypto 3.0.9 on the RustCrypto 0.14 curve crates, in place of the crates.io release
+# cosmwasm-vm and cosmwasm-std pin (=3.0.9), which is on k256/p256 0.13 and so on crypto-bigint 0.5
+# (RUSTSEC-2026-0387). What changed, and why, is at the top of patches/cosmwasm-crypto/Cargo.toml;
+# patches/cosmwasm-crypto-differential holds it to upstream on every ECDSA entry point.
+[patch.crates-io]
+cosmwasm-crypto = { path = "patches/cosmwasm-crypto" }
 
 [profile.release]
 opt-level = 3

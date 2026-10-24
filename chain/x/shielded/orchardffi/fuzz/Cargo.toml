@@ -11,6 +11,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 orama-orchard-ffi = { path = ".." }
+# Only the bundle-reader differential uses these: zcash_primitives' reader is the one src/wire.rs
+# replaced, and the reference it is compared with.
+orchard = "=0.15.5"
+zcash_primitives = { version = "=0.30.1", default-features = false, features = ["std"] }
+zcash_protocol = "=0.10.6"
 
 # Its own workspace root, so the fuzz crate's lock file and build directory stay out of the
 # library's (whose Cargo.lock is pinned and audited).
@@ -26,6 +31,13 @@ bench = false
 [[bin]]
 name = "tree_append"
 path = "fuzz_targets/tree_append.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wire_read"
+path = "fuzz_targets/wire_read.rs"
 test = false
 doc = false
 bench = false

@@ -812,8 +812,8 @@ name = "orama-orchard-ffi"
 version = "0.1.0"
 dependencies = [
  "incrementalmerkletree",
+ "nonempty",
  "orchard",
- "zcash_primitives",
  "zcash_protocol",
 ]
 
@@ -823,6 +823,9 @@ version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "orama-orchard-ffi",
+ "orchard",
+ "zcash_primitives",
+ "zcash_protocol",
 ]
 
 [[package]]

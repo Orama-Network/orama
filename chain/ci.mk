@@ -41,16 +41,18 @@ TAGSETS := "" "nowasm" "nowasm orchardffi"
 ANALYSIS_TAGSETS := "" "nowasm orchardffi"
 
 # --- the Rust crates --------------------------------------------------------------------------
-# Lint and sanitize: the crates that are compiled into oramad or used to prove for it.
+# Lint, sanitize, audit and deny: the crates that are compiled into oramad or used to prove for it.
 RUST_CRATES := $(ORCHARD_CRATE) $(VERIFIER_CRATE) $(SHIELDED_WALLET_CRATE) native
-# Audit and deny: those, plus the CosmWasm contracts the tests upload.
-RUST_AUDITED := $(RUST_CRATES) app/testdata/echo app/testdata/relay app/testdata/hook
+# The CosmWasm contracts the tests upload. Each exists only as the committed .wasm built from it for
+# wasm32-unknown-unknown, so what it ships is its wasm32 dependency graph: cosmwasm-std's host-only
+# dependencies (cosmwasm-crypto and its curve crates, cfg(not(target_arch = "wasm32"))) are never
+# compiled into it. cargo-audit reads every package of a lock file whatever the target, so the
+# contracts are checked by cargo-deny alone, against the same RustSec database, on that graph.
+RUST_CONTRACTS := app/testdata/echo app/testdata/relay app/testdata/hook
+CONTRACT_TARGET := wasm32-unknown-unknown
 # Lints this repo does not follow, with the reason. manual_is_multiple_of wants a method stable
-# only since Rust 1.90, and the crates declare rust-version 1.88. chunks_exact_to_as_chunks fires
-# in the verifier library (x/shielded/orchardffi/src/tree.rs): editing it changes the recorded hash
-# of the static library (native/libwasmvm_muslc.x86_64.a.sha256), so it waits for the next release
-# rebuild.
-CLIPPY_ALLOW := -A clippy::manual_is_multiple_of -A clippy::chunks_exact_to_as_chunks
+# only since Rust 1.90, and the crates declare rust-version 1.88.
+CLIPPY_ALLOW := -A clippy::manual_is_multiple_of
 # Advisories cargo-audit ignores. The list and the reasons are in deny.toml; keep both in step.
 RUST_AUDIT_IGNORE := RUSTSEC-2026-0007 RUSTSEC-2026-0001 RUSTSEC-2026-0233 RUSTSEC-2026-0234 \
 	RUSTSEC-2026-0235 RUSTSEC-2026-0204 RUSTSEC-2026-0009 RUSTSEC-2026-0067 RUSTSEC-2026-0068 \
@@ -80,7 +82,7 @@ MUTATION_MIN := x/emission/types=80 x/power/types=65 x/storage/keeper=0
 MUTATION_DEFAULT_MIN := 90
 
 # --- fuzzing (SA2, bugboard 3388) -------------------------------------------------------------
-# Go native fuzz targets (func FuzzX(f *testing.F)) in chain/ and core/, and four cargo-fuzz targets
+# Go native fuzz targets (func FuzzX(f *testing.F)) in chain/ and core/, and five cargo-fuzz targets
 # over the Orchard verifier crates. website/src/docs/contributor/testing.mdx ("Fuzzing") has the
 # budgets and what each target checks. The Go targets run with nowasm (no libwasmvm to build) and
 # the Orchard library and verifier binary linked, so the differential and cgo targets run.
@@ -98,11 +100,11 @@ FUZZ_ARTIFACTS ?= $(CURDIR)/$(BUILD_DIR)/fuzz-crashers
 FUZZ_CARGO_SECONDS ?= 600
 # crate:target pairs. The corpus directory of a crate's fuzz/ is ignored by git; fuzz/seeds/<target>
 # is the committed seed set, read-only to the fuzzer.
-FUZZ_CARGO_TARGETS := $(ORCHARD_CRATE):ffi_verify $(ORCHARD_CRATE):tree_append \
+FUZZ_CARGO_TARGETS := $(ORCHARD_CRATE):ffi_verify $(ORCHARD_CRATE):tree_append $(ORCHARD_CRATE):wire_read \
 	$(VERIFIER_CRATE):stdin_frames $(VERIFIER_CRATE):check_framing
 
 .PHONY: rust-ignores ci ci-nightly test-race wasmvm-lib native-vendor staticcheck gosec govulncheck vet-all \
-	nilaway semgrep semgrep-test mutation rust-lint rust-audit rust-deny rust-miri rust-asan \
+	nilaway semgrep semgrep-test mutation rust-lint rust-audit rust-deny rust-miri rust-asan native-crypto-test \
 	rust-tools tools-go fuzz-list fuzz-corpus fuzz-short fuzz-long fuzz-long-chain fuzz-long-core rust-fuzz rust-fuzz-tools
 
 ## print-<VAR>: print a variable of this Makefile (the workflows read the pinned versions from here).
@@ -110,7 +112,7 @@ print-%:
 	@echo '$($*)'
 
 ## ci: everything the pull-request workflow runs, in one command (slow: build, race tests, scanners).
-ci: vet-all test-race fuzz-short staticcheck gosec govulncheck semgrep-test semgrep rust-lint rust-audit rust-deny rust-ignores
+ci: vet-all test-race fuzz-short staticcheck gosec govulncheck semgrep-test semgrep rust-lint rust-audit rust-deny rust-ignores native-crypto-test
 
 ## ci-nightly: the heavy checks the nightly workflow runs.
 ci-nightly: nilaway mutation rust-miri rust-asan fuzz-long rust-fuzz
@@ -121,7 +123,11 @@ ci-nightly: nilaway mutation rust-miri rust-asan fuzz-long rust-fuzz
 ## copy gets native/src/probestack.rs, the same __rust_probestack the release library links: with
 ## RUST_TOOLCHAIN's compiler_builtins the symbol wasmer_vm calls is otherwise undefined and every
 ## test binary fails to link. Cargo builds into WASMVM_TARGET, outside the copy that is replaced on
-## every run, so wasmer and the other dependencies are compiled once and not again per run.
+## every run, so wasmer and the other dependencies are compiled once and not again per run. The copy
+## links what the release library links: the cosmwasm-crypto fork native/Cargo.toml patches in, at
+## the versions native/Cargo.lock pins. That lock already resolves libwasmvm's whole tree, so cargo
+## keeps every version in it and only drops the packages of the Orchard half, which this build does
+## not reach; it resolves nothing anew.
 WASMVM_OUT := $(CURDIR)/$(BUILD_DIR)/wasmvm
 WASMVM_TARGET := $(CURDIR)/$(BUILD_DIR)/wasmvm-target
 WASMVM_SO := $(if $(filter darwin,$(HOST_GOOS)),libwasmvm.dylib,libwasmvm.so)
@@ -130,11 +136,13 @@ wasmvm-lib:
 	mkdir -p $(WASMVM_OUT)
 	cp -R $(WASMVM_DIR)/libwasmvm $(WASMVM_OUT)/src
 	chmod -R u+w $(WASMVM_OUT)/src
+	printf '\n[patch.crates-io]\ncosmwasm-crypto = { path = "%s" }\n' "$(CURDIR)/native/patches/cosmwasm-crypto" >> $(WASMVM_OUT)/src/Cargo.toml
+	cp native/Cargo.lock $(WASMVM_OUT)/src/Cargo.lock
 ifeq ($(HOST_GOOS),linux)
 	cp native/src/probestack.rs $(WASMVM_OUT)/src/src/orama_probestack.rs
 	printf '\nmod orama_probestack;\n' >> $(WASMVM_OUT)/src/src/lib.rs
 endif
-	cd $(WASMVM_OUT)/src && cargo +$(RUST_TOOLCHAIN) build --release --locked --target-dir $(WASMVM_TARGET)
+	cd $(WASMVM_OUT)/src && cargo +$(RUST_TOOLCHAIN) build --release --target-dir $(WASMVM_TARGET)
 	cp $(WASMVM_TARGET)/release/$(WASMVM_SO) $(WASMVM_OUT)/$(WASMVM_SO)
 
 ## test-race: every package under the race detector with all three native pieces linked: CosmWasm
@@ -232,6 +240,13 @@ rust-lint: native-vendor
 		(cd $$c && cargo +$(RUST_TOOLCHAIN) clippy --locked --all-targets -- -D warnings $(CLIPPY_ALLOW)) || exit 1; \
 	done
 
+## native-crypto-test: the cosmwasm-crypto fork chain/native links (native/patches/cosmwasm-crypto):
+## upstream's secp256k1 and secp256r1 suites, then the fork against the crates.io release it replaces
+## on every ECDSA entry point (native/patches/cosmwasm-crypto-differential).
+native-crypto-test:
+	cd native/patches/cosmwasm-crypto && cargo +$(RUST_TOOLCHAIN) test --release --locked
+	cd native/patches/cosmwasm-crypto-differential && cargo +$(RUST_TOOLCHAIN) test --release --locked
+
 ## rust-tools: install the pinned cargo-audit and cargo-deny from their upstream release archives,
 ## checked against the sha256 below (scripts/release-tool.sh). Bump a version together with the four
 ## hashes of its archives; cargo-deny publishes a .sha256 beside each archive, cargo-audit does not.
@@ -259,18 +274,24 @@ rust-tools:
 	@cargo deny --version 2>/dev/null | grep -q "$(CARGO_DENY_VERSION)" || scripts/release-tool.sh cargo-deny "$(CARGO_DENY_URL)" "$(CARGO_DENY_SHA256_$(HOST_PLATFORM))"
 
 ## rust-audit: RustSec advisories in each crate's Cargo.lock. Fails on a vulnerability that is not
-## in RUST_AUDIT_IGNORE; unmaintained and unsound warnings are printed, not failed.
+## in RUST_AUDIT_IGNORE; unmaintained and unsound warnings are printed, not failed. The contracts'
+## advisories are rust-deny's, on their wasm32 graph (RUST_CONTRACTS).
 rust-audit: rust-tools
-	@for c in $(RUST_AUDITED); do \
+	@for c in $(RUST_CRATES); do \
 		echo "cargo audit $$c"; \
 		(cd $$c && cargo audit -f Cargo.lock $(addprefix --ignore ,$(RUST_AUDIT_IGNORE))) || exit 1; \
 	done
 
-## rust-deny: advisories, licences, bans and sources by deny.toml for each crate.
+## rust-deny: advisories, licences, bans and sources by deny.toml for each crate, on the targets
+## deny.toml names, and for each contract on CONTRACT_TARGET.
 rust-deny: rust-tools
-	@for c in $(RUST_AUDITED); do \
+	@for c in $(RUST_CRATES); do \
 		echo "cargo deny $$c"; \
 		cargo deny --manifest-path $$c/Cargo.toml --config deny.toml --log-level error check || exit 1; \
+	done
+	@for c in $(RUST_CONTRACTS); do \
+		echo "cargo deny $$c ($(CONTRACT_TARGET))"; \
+		cargo deny --manifest-path $$c/Cargo.toml --config deny.toml --log-level error --target $(CONTRACT_TARGET) check || exit 1; \
 	done
 
 ## rust-ignores: keep the ignored advisories honest. Every ignore in deny.toml carries a "review-by
@@ -280,9 +301,13 @@ rust-deny: rust-tools
 ## comparison; cargo-deny's own failures are read from its output, so a failed run is not a clean one.
 rust-ignores: rust-tools native-vendor
 	@out=$$(mktemp -d); trap 'rm -rf $$out' EXIT; \
-	for c in $(RUST_AUDITED); do \
+	for c in $(RUST_CRATES); do \
 		echo "cargo deny advisories $$c"; \
 		cargo deny --manifest-path $$c/Cargo.toml --config deny.toml --format json check advisories 2> $$out/$$(echo $$c | tr / -).json > /dev/null || true; \
+	done; \
+	for c in $(RUST_CONTRACTS); do \
+		echo "cargo deny advisories $$c ($(CONTRACT_TARGET))"; \
+		cargo deny --manifest-path $$c/Cargo.toml --config deny.toml --format json --target $(CONTRACT_TARGET) check advisories 2> $$out/$$(echo $$c | tr / -).json > /dev/null || true; \
 	done; \
 	go run ./scripts/rustignores -deny deny.toml -ci ci.mk $$out/*.json
 
@@ -360,9 +385,10 @@ rust-fuzz-tools:
 	@cargo fuzz --version 2>/dev/null | grep -q "$(CARGO_FUZZ_VERSION)" || cargo install --locked --version $(CARGO_FUZZ_VERSION) cargo-fuzz
 	rustup toolchain install $(RUST_NIGHTLY) --profile minimal
 
-## rust-fuzz: the four cargo-fuzz targets of the Orchard verifier crates, FUZZ_CARGO_SECONDS each
-## (nightly): the C ABI verify entry, the tree append entry, the verifier process's stdin frame
-## parser, and the framing check of the out-of-process verifier against the library's. The fuzz
+## rust-fuzz: the five cargo-fuzz targets of the Orchard verifier crates, FUZZ_CARGO_SECONDS each
+## (nightly): the C ABI verify entry, the tree append entry, the library's bundle reader against
+## zcash_primitives' (the one it replaced), the verifier process's stdin frame parser, and the
+## framing check of the out-of-process verifier against the library's. The fuzz
 ## crates have their own Cargo.lock (seeded from the crate's pinned one) and are never built into oramad.
 rust-fuzz: rust-fuzz-tools
 	@rc=0; for pair in $(FUZZ_CARGO_TARGETS); do \

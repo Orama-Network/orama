@@ -21,11 +21,12 @@ import (
 )
 
 // The differential harness (SA3). The two verifiers of x/shielded are the linked library and the
-// out-of-process binary. They are two builds of one implementation, so they must agree on every
-// input: the same accept or reject, and the same class of reason. A bundle that one accepts and the
+// out-of-process binary. They are two builds over one implementation, with two bundle readers (the
+// library's own, zcash_primitives' in the binary), so they must agree on every input: the same
+// accept or reject, and the same class of reason. A bundle that one accepts and the
 // other refuses would split the verifiers; a node that runs both refuses it, but a verdict that
-// depends on which build looked is the signature of a build or ABI bug, and this harness is what
-// finds it. The valid bundles are the committed vectors the wallet crate builds with real proofs
+// depends on which build looked is the signature of a build, ABI or reader bug, and this harness is
+// what finds it. The valid bundles are the committed vectors the wallet crate builds with real proofs
 // (chain/x/shielded/orchardffi/testdata); everything else is derived from them.
 
 // The classes a verifier's answer falls in. A fault is not a verdict: no input may produce one.

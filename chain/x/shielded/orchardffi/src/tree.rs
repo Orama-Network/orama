@@ -42,8 +42,10 @@ pub fn decode(data: &[u8]) -> Option<Tree> {
         return None;
     }
     let ommers = rest
-        .chunks_exact(NODE_LEN)
-        .map(node)
+        .as_chunks::<NODE_LEN>()
+        .0
+        .iter()
+        .map(|ommer| node(ommer))
         .collect::<Option<Vec<_>>>()?;
     Tree::from_parts(Position::from(position), leaf, ommers).ok()
 }
@@ -74,7 +76,7 @@ pub fn append(frontier: &[u8], commitments: &[u8]) -> Option<(Vec<u8>, [u8; NODE
         return None;
     }
     let mut tree = decode(frontier)?;
-    for cmx in commitments.chunks_exact(NODE_LEN) {
+    for cmx in commitments.as_chunks::<NODE_LEN>().0 {
         if !tree.append(node(cmx)?) {
             return None;
         }

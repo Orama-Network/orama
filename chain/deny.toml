@@ -2,7 +2,9 @@
 #
 # One policy for every crate: orchardffi, orchardverifier-bin, wallet, native (libwasmvm + the
 # Orchard library) and the test contracts under app/testdata. `make -C chain rust-deny` runs it
-# against each crate's own Cargo.lock; CI runs that target on every pull request.
+# against each crate's own Cargo.lock, the contracts on wasm32-unknown-unknown (the only target they
+# are built for, and the graph their .wasm is made of) in place of the targets below; CI runs that
+# target on every pull request.
 #
 # The crates are consensus code (a proof verifier, the CosmWasm VM) or sit next to it, so the
 # policy is strict where a mistake is silent: only crates.io, no git dependencies, no yanked

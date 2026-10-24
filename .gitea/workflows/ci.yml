@@ -218,7 +218,7 @@ jobs:
         id: keys
         run: |
           .gitea/scripts/cache-key.sh go chain/go.sum
-          .gitea/scripts/cache-key.sh cargo chain/x/shielded/orchardffi/Cargo.lock chain/x/shielded/orchardverifier-bin/Cargo.lock chain/x/shielded/wallet/Cargo.lock chain/native/Cargo.lock
+          .gitea/scripts/cache-key.sh cargo chain/x/shielded/orchardffi/Cargo.lock chain/x/shielded/orchardverifier-bin/Cargo.lock chain/x/shielded/wallet/Cargo.lock chain/native/Cargo.lock chain/native/patches/cosmwasm-crypto/Cargo.lock chain/native/patches/cosmwasm-crypto-differential/Cargo.lock
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -253,6 +253,8 @@ jobs:
             chain/x/shielded/orchardverifier-bin/target
             chain/x/shielded/wallet/target
             chain/native/target
+            chain/native/patches/cosmwasm-crypto/target
+            chain/native/patches/cosmwasm-crypto-differential/target
           key: cargo-${{ github.job }}-${{ steps.rust.outputs.toolchain }}-${{ steps.keys.outputs.cargo }}
           restore-keys: cargo-${{ github.job }}-${{ steps.rust.outputs.toolchain }}-
 
@@ -270,6 +272,11 @@ jobs:
       # Every ignored advisory has a review-by date that has not passed and still matches a crate.
       - name: ignored advisories
         run: make -C chain rust-ignores
+
+      # The cosmwasm-crypto fork native links: upstream's ECDSA suites and the differential against
+      # the crates.io release it replaces.
+      - name: cosmwasm-crypto fork
+        run: make -C chain native-crypto-test
 
   # Every Go fuzz target of the chain and of core (SA2, bugboard 3388), a few seconds each: enough to
   # replay the whole seed corpus (the real Ironwood bundles, signed transactions and network files

@@ -5,11 +5,13 @@
 // (x/shielded/verify/orchardproc). Two verifiers must accept a bundle, so with one linked, Check
 // still fails closed, and a missing verifier fails closed.
 //
-// The two are two builds and two processes of ONE implementation, not two implementations. They
-// protect against a memory-corruption bug, a link or ABI problem, a hang or a bad dependency bump
-// in one build. They do not protect against a logic bug in the upstream orchard crate or in the
-// wrapper both builds carry (framing, the sighash input, the branch id, the pool): a bundle that
-// exploits one is accepted by both. This package does not implement a circuit.
+// The two are two builds and two processes over ONE implementation, not two implementations: both
+// check with the upstream orchard crate, and only the code that reads the bundle's bytes differs
+// (the library's own reader, zcash_primitives' in the binary). They protect against a
+// memory-corruption bug, a link or ABI problem, a hang or a bad dependency bump in one build, and a
+// bug in one reader. They do not protect against a logic bug in the upstream orchard crate or in
+// the wrapper both builds carry (framing, the sighash input, the key version, the pool): a bundle
+// that exploits one is accepted by both. This package does not implement a circuit.
 package verify
 
 import (

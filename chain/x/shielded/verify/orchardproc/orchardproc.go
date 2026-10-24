@@ -3,9 +3,10 @@
 // (chain/x/shielded/orchardverifier-bin) that the node keeps running out of process.
 //
 // What the split gives: a memory-corruption bug, a link problem or a hang in one build cannot
-// silently pass a bundle in the other. What it does not give: independence of the verification
-// logic. Both builds are one implementation (the same upstream crate and a near copy of the same
-// wrapper), so a logic bug in either is accepted by both. See docs/whitepaper/technical-reference/vol2/43-the-shielded-pool.md.
+// silently pass a bundle in the other, and a bug in one bundle reader (the library has its own,
+// this binary uses zcash_primitives') shows as a disagreement. What it does not give: independence
+// of the verification logic. Both builds check with one implementation (the same upstream crate and
+// a near copy of the same wrapper), so a logic bug in either is accepted by both. See docs/whitepaper/technical-reference/vol2/43-the-shielded-pool.md.
 //
 // Protocol (every frame length-prefixed, u32 big-endian):
 //
