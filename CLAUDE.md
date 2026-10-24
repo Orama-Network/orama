@@ -16,6 +16,8 @@ Devnet and testnet run only archives CI built. Tag the branch (`vX.Y.Z-nightly` 
 
 Working tree: work in the main checkout on its current branch (`nightly`). Use a separate git worktree or branch only when parallel agents would otherwise conflict on the same files. When the work in it is done, merge it into the branch it belongs to (`nightly` or `main`) in the main checkout, push, and delete the worktree and its branch: no worktree outlives its work.
 
+Clean up after yourself: when a test run, build, watcher, background job, container, tunnel or temporary worktree has done its job, stop it and remove what it left (processes, containers, temp files, scratch copies of archives). Before ending a turn, check that nothing you started is still running unless it is still needed, and say what is.
+
 Bugboard status follows the work, so the owner can see it:
 - `in_progress` the moment work on a task starts (including by a subagent).
 - `review` once it is built and committed, but not yet deployed.
