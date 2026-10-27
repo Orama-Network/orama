@@ -27,7 +27,7 @@ func TestIsTestNetwork(t *testing.T) {
 }
 
 const (
-	chainErrorsFile = "../../../chain/x/emission/types/errors.go"
+	chainErrorsFile = "../../testdata/repo/chain/x/emission/types/errors.go"
 )
 
 // classify finds the chain's refusals by their text, so the texts here must be the chain's.

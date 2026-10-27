@@ -12,9 +12,14 @@ import (
 	"github.com/Orama-Network/orama/e2e/harness/hetzner"
 )
 
+// linkedRepo is the repository as these tests read it: e2e/testdata/repo links
+// in the files above this module they use, so the go test cache sees them as
+// inputs.
+var linkedRepo = filepath.Join("..", "..", "testdata", "repo")
+
 func writeRepoRoots(t *testing.T, repo string) {
 	t.Helper()
-	real, err := os.ReadFile(filepath.Join("..", "..", "..", stagingRootsSource))
+	real, err := os.ReadFile(filepath.Join(linkedRepo, stagingRootsSource))
 	if err != nil {
 		t.Fatalf("read the repository's staging roots: %v", err)
 	}

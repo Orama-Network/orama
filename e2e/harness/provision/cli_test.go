@@ -87,6 +87,11 @@ func chainScriptPath(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// bash reads the script in a process of its own, which the go test
+	// cache does not see; reading it here makes it an input of the test.
+	if _, err := os.ReadFile(p); err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 

@@ -21,8 +21,8 @@ import (
 // cannot import the chain, so this file keeps the two honest: the chain's test data is read here, and
 // the chain's function is compared with this package's copy.
 const (
-	chainUpgradeInfoSource = "../../../chain/x/houses/types/upgrade_info.go"
-	chainURLVectors        = "../../../chain/x/houses/types/testdata/upgrade_url_vectors.json"
+	chainUpgradeInfoSource = "../../testdata/repo/chain/x/houses/types/upgrade_info.go"
+	chainURLVectors        = "../../testdata/repo/chain/x/houses/types/testdata/upgrade_url_vectors.json"
 )
 
 type urlVector struct {

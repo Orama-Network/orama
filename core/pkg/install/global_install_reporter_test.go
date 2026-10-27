@@ -227,7 +227,7 @@ func TestReporterFileNamesMatchTheReporterCommand(t *testing.T) {
 	if !ok {
 		t.Fatal("no caller")
 	}
-	src := filepath.Join(filepath.Dir(file), "..", "..", "..", "chain", "cmd", "orama-global", "reporter.go")
+	src := filepath.Join(filepath.Dir(file), "..", "..", "testdata", "repo", "chain", "cmd", "orama-global", "reporter.go")
 	data, err := os.ReadFile(src)
 	if err != nil {
 		t.Fatalf("read %s: %v", src, err)

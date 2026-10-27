@@ -1,6 +1,7 @@
 package build
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -41,21 +42,60 @@ func TestOramaBinaries_EverySQLiteBinaryIsBuiltWithCGO(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	projectDir := filepath.Join(filepath.Dir(file), "..", "..", "..", "..")
 
+	declareGoListInputs(t, projectDir)
 	for _, bin := range oramaBinaries("") {
-		cmd := exec.Command("go", "list", "-deps", bin.Package)
+		cmd := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}\t{{.Dir}}", bin.Package)
 		cmd.Dir = projectDir
 		cmd.Env = append(cmd.Environ(), "GOOS=linux", "CGO_ENABLED=1")
 		out, err := cmd.Output()
 		if err != nil {
 			t.Fatalf("go list %s: %v", bin.Package, err)
 		}
-		linksSQLite := strings.Contains(string(out), "github.com/mattn/go-sqlite3\n")
+		linksSQLite := false
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			importPath, dir, _ := strings.Cut(line, "\t")
+			linksSQLite = linksSQLite || importPath == "github.com/mattn/go-sqlite3"
+			declarePackageDir(t, projectDir, dir)
+		}
 		if linksSQLite && !bin.CGO {
 			t.Errorf("%s links github.com/mattn/go-sqlite3 but is built without cgo", bin.Name)
 		}
 		if !linksSQLite && bin.CGO {
 			t.Errorf("%s is built with cgo but does not need it; keep it CGO_ENABLED=0", bin.Name)
 		}
+	}
+}
+
+// The go command reads the import graph go list reports in a process of its
+// own, so the files it read are not inputs the go test cache knows of, and
+// most of these packages are not linked into this test's binary either. The
+// test declares them by opening them itself: the module's go.mod and go.sum
+// (they pick the dependencies' versions, and so their imports), and the
+// directory of every module package a binary links (an opened directory is
+// recorded with each file's size and modification time). Editing any of them
+// reruns the test.
+func declareGoListInputs(t *testing.T, projectDir string) {
+	t.Helper()
+	for _, name := range []string{"go.mod", "go.sum"} {
+		if _, err := os.ReadFile(filepath.Join(projectDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// declarePackageDir opens dir when it is a package of the module at
+// projectDir; packages from the module cache are fixed by go.sum.
+func declarePackageDir(t *testing.T, projectDir, dir string) {
+	t.Helper()
+	module, err := filepath.Abs(projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(dir, module+string(filepath.Separator)) {
+		return
+	}
+	if _, err := os.ReadDir(dir); err != nil {
+		t.Fatal(err)
 	}
 }
 

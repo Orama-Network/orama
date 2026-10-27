@@ -14,7 +14,7 @@ func TestRootsMatchTheChainVectors(t *testing.T) {
 	if !ok {
 		t.Fatal("no caller")
 	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "chain", "piece", "testdata", "vectors.json"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "testdata", "repo", "chain", "piece", "testdata", "vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

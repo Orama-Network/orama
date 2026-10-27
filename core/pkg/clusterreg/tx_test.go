@@ -79,7 +79,7 @@ func TestValidate_refusesAPrivateEndpoint(t *testing.T) {
 }
 
 func TestRulesMatchTheChainModule(t *testing.T) {
-	data, err := os.ReadFile("../../../chain/x/nodes/types/validate.go")
+	data, err := os.ReadFile("../../testdata/repo/chain/x/nodes/types/validate.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,14 +94,14 @@ func TestRulesMatchTheChainModule(t *testing.T) {
 			t.Errorf("chain validate.go no longer contains %q", want)
 		}
 	}
-	params, err := os.ReadFile("../../../chain/x/nodes/types/params.go")
+	params, err := os.ReadFile("../../testdata/repo/chain/x/nodes/types/params.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(params, []byte("absoluteEndpointCap uint32 = 64")) {
 		t.Fatal("chain endpoint cap is no longer 64")
 	}
-	msgs, err := os.ReadFile("../../../chain/x/nodes/types/tx.pb.go")
+	msgs, err := os.ReadFile("../../testdata/repo/chain/x/nodes/types/tx.pb.go")
 	if err != nil {
 		t.Fatal(err)
 	}

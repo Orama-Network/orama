@@ -20,7 +20,7 @@ func TestRequireLocalOnly_acceptsOnlyLoopbackAndTheNamespaceAddress(t *testing.T
 }
 
 func TestNamespaceAddr_isTheCoreConstant(t *testing.T) {
-	data, err := os.ReadFile("../../../core/pkg/constants/global.go")
+	data, err := os.ReadFile("../../testdata/repo/core/pkg/constants/global.go")
 	require.NoError(t, err)
 	require.Contains(t, string(data), `GlobalNetnsAddr = "`+namespaceAddr+`"`)
 }

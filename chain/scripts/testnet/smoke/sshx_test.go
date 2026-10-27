@@ -33,7 +33,7 @@ func TestAgentCommand_pipesTheKeyOnTheNodeAndNeverPrintsIt(t *testing.T) {
 
 func TestNamespaceAddr_isTheCoreConstant(t *testing.T) {
 	// core/pkg/constants.GlobalNetnsAddr; chain cannot import core, so the literal is checked here.
-	data, err := os.ReadFile("../../../../core/pkg/constants/global.go")
+	data, err := os.ReadFile("../../../testdata/repo/core/pkg/constants/global.go")
 	require.NoError(t, err)
 	require.Contains(t, string(data), `GlobalNetnsAddr = "`+namespaceAddr+`"`)
 }

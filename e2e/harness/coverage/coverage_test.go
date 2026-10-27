@@ -87,7 +87,9 @@ func TestRoutes_emptyDocFails(t *testing.T) {
 }
 
 func TestUniverse_realRepo(t *testing.T) {
-	u, err := Universe(filepath.Join("..", "..", ".."))
+	// e2e/testdata/repo links in the sources Universe reads from above this
+	// module, so the go test cache sees them as inputs.
+	u, err := Universe(filepath.Join("..", "..", "testdata", "repo"))
 	if err != nil {
 		t.Fatalf("the real repository's sources do not enumerate: %v", err)
 	}

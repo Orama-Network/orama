@@ -19,7 +19,7 @@ func TestLocalChainRPCURL_loopbackRPCPort(t *testing.T) {
 }
 
 func TestTestnetDeployScript_usesTheNamespaceAddress(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "chain", "scripts", "testnet", "deploy.sh"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "repo", "chain", "scripts", "testnet", "deploy.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestTestnetDeployScript_usesTheNamespaceAddress(t *testing.T) {
 // The chain module cannot import core, so provider/kubo.go repeats the namespace address it
 // trusts for the bearer token. A change on either side must fail here.
 func TestProviderKubo_colocatedHostIsTheNamespaceAddress(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "chain", "provider", "kubo.go"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "repo", "chain", "provider", "kubo.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestChainPorts_outsideIndexAndTenantBlocks(t *testing.T) {
 // reset-node.sh puts net.ipv4.ip_forward back from the record the installer writes; the two must
 // name the same file.
 func TestTestnetResetScript_restoresForwardingFromTheInstallersRecord(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", "chain", "scripts", "testnet", "remote", "reset-node.sh"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "repo", "chain", "scripts", "testnet", "remote", "reset-node.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,8 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// docsDir is the repository's documentation, from this package.
-const docsDir = "../../../../docs"
+// docsDir is the repository's documentation, from this package, through the
+// chain/testdata/repo link: the docs live above this module, and reading them
+// through a path inside it is what makes the go test cache treat them as
+// inputs.
+const docsDir = "../../../testdata/repo/docs"
 
 // txCommandMention finds `oramad tx <group> [<verb>]` in prose. Whitespace
 // between the words may be a line break.
@@ -37,14 +40,17 @@ func TestDocs_oramadTxCommandsExist(t *testing.T) {
 	if tx == nil {
 		t.Fatal("oramad has no tx command")
 	}
-	err := filepath.WalkDir(docsDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+	// docsDir is a link; os.DirFS follows it where filepath.WalkDir would stop at it.
+	docs := os.DirFS(docsDir)
+	err := fs.WalkDir(docs, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(name, ".md") {
 			return err
 		}
-		body, err := os.ReadFile(path)
+		body, err := fs.ReadFile(docs, name)
 		if err != nil {
 			return err
 		}
+		path := filepath.Join("docs", name)
 		for _, m := range txCommandMention.FindAllStringSubmatch(string(body), -1) {
 			group := subcommand(tx, m[1])
 			if group == nil {

@@ -99,7 +99,7 @@ func TestIsPublic_zeroAndZonedAddressesAreNot(t *testing.T) {
 // range this classifier refuses must be in it (it may add more: AS112, AMT and the IPv6 loopback and
 // unspecified addresses), or a tenant could reach through core what the chain refuses.
 func TestNetclassRangesAreCoveredByCoreNetguard(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "core", "pkg", "netguard", "netguard.go"))
+	src, err := os.ReadFile(filepath.Join("..", "testdata", "repo", "core", "pkg", "netguard", "netguard.go"))
 	require.NoError(t, err)
 	core := map[string]bool{}
 	for _, m := range regexp.MustCompile(`(?m)^\t"([0-9a-f:.]+/[0-9]+)",$`).FindAllStringSubmatch(string(src), -1) {

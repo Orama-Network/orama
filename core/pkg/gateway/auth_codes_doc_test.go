@@ -16,7 +16,7 @@ import (
 // moment a code is added without a line there — which is how the auth docs got
 // into the state this epic had to correct.
 func TestAuthCodes_areAllInTheDocs(t *testing.T) {
-	doc, err := os.ReadFile(filepath.Join(repoRootFor(t), "docs/whitepaper/technical-reference/vol1/14-authorization.md"))
+	doc, err := os.ReadFile(filepath.Join(linkedRepo, "docs/whitepaper/technical-reference/vol1/14-authorization.md"))
 	if err != nil {
 		t.Fatalf("read docs/whitepaper/technical-reference/vol1/14-authorization.md: %v", err)
 	}

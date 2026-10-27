@@ -72,7 +72,7 @@ func TestPlan_invalidConfig(t *testing.T) {
 }
 
 func TestCheckStagingRoots(t *testing.T) {
-	real, err := os.ReadFile(filepath.Join("..", "..", "..", stagingRootsSource))
+	real, err := os.ReadFile(filepath.Join(linkedRepo, stagingRootsSource))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestWaitCertificate_verifiesAgainstTheCAFileOnly(t *testing.T) {
 	if err := waitCertificate(context.Background(), addr, "example.com", own, 10*time.Millisecond); err != nil {
 		t.Fatalf("a certificate the CA file trusts: %v", err)
 	}
-	staging := filepath.Join("..", "..", "..", stagingRootsSource)
+	staging := filepath.Join(linkedRepo, stagingRootsSource)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	if err := waitCertificate(ctx, addr, "example.com", staging, 20*time.Millisecond); err == nil {

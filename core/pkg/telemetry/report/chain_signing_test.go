@@ -35,7 +35,7 @@ func TestBech32_rejectsABadChecksum(t *testing.T) {
 }
 
 func TestConsHRPMatchesChainParams(t *testing.T) {
-	data, err := os.ReadFile("../../../../chain/app/params/params.go")
+	data, err := os.ReadFile("../../../testdata/repo/chain/app/params/params.go")
 	if err != nil {
 		t.Fatal(err)
 	}

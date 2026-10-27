@@ -525,7 +525,7 @@ func TestProtectedTables_nonPlatformEntriesAreDeliberate(t *testing.T) {
 // website/src/docs/developer/functions.mdx lists the reserved names so a tenant can avoid them. The
 // list is copied by hand, so this fails when it and protectedTables differ.
 func TestProtectedTables_matchTheDocumentedList(t *testing.T) {
-	doc, err := os.ReadFile("../../../website/src/docs/developer/functions.mdx")
+	doc, err := os.ReadFile("../../testdata/repo/website/src/docs/developer/functions.mdx")
 	if err != nil {
 		t.Fatalf("read website/src/docs/developer/functions.mdx: %v", err)
 	}

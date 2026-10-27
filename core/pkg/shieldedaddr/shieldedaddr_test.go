@@ -10,7 +10,7 @@ import (
 )
 
 // vectorFile is the one file the Rust, Go and TypeScript codecs all read.
-var vectorFile = filepath.Join("..", "..", "..", "chain", "x", "shielded", "wallet", "testdata", "addresses", "addresses.json")
+var vectorFile = filepath.Join("..", "..", "testdata", "repo", "chain", "x", "shielded", "wallet", "testdata", "addresses", "addresses.json")
 
 type pair struct {
 	Raw     string `json:"raw"`

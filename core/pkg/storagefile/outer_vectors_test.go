@@ -14,7 +14,7 @@ import (
 // (chain/storagekey). Both sides are locked to that package's vectors.
 func TestApplyOuter_matchesTheChainVectors(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "..", "chain", "storagekey", "testdata", "outer_vectors.json"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "testdata", "repo", "chain", "storagekey", "testdata", "outer_vectors.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -35,7 +35,7 @@ func TestThirdPartyModules_requireTheVersionsTheConstantsName(t *testing.T) {
 	}{
 		{filepath.Join(core, thirdPartyDir, "olric", "go.mod"), "github.com/olric-data/olric", constants.OlricVersion},
 		{filepath.Join(core, thirdPartyDir, "ipfs-cluster", "go.mod"), "github.com/ipfs-cluster/ipfs-cluster", constants.IPFSClusterVersion},
-		{filepath.Join(core, "..", "caddy", "go.mod"), "github.com/caddyserver/caddy/v2", "v" + constants.CaddyVersion},
+		{filepath.Join(core, "testdata", "repo", "caddy", "go.mod"), "github.com/caddyserver/caddy/v2", "v" + constants.CaddyVersion},
 	} {
 		if got := moduleVersion(t, c.goMod, c.module); got != c.want {
 			t.Errorf("%s requires %s %s, constants say %s", c.goMod, c.module, got, c.want)
@@ -48,7 +48,7 @@ func TestThirdPartyModules_everyOneIsPinnedByAGoSum(t *testing.T) {
 	for _, dir := range []string{
 		filepath.Join(core, thirdPartyDir, "olric"),
 		filepath.Join(core, thirdPartyDir, "ipfs-cluster"),
-		filepath.Join(core, "..", "caddy"),
+		filepath.Join(core, "testdata", "repo", "caddy"),
 	} {
 		sum, err := os.ReadFile(filepath.Join(dir, "go.sum"))
 		if err != nil {

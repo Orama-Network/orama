@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const chainNameFile = "../../../chain/x/nodes/types/name.go"
+const chainNameFile = "../../testdata/repo/chain/x/nodes/types/name.go"
 
 // TestReservedNames_matchTheChain reads the chain's source: the list here must be the chain's list,
 // and the length bounds and the numbered families must be the chain's too.

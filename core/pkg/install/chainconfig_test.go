@@ -231,7 +231,7 @@ func TestInstallGlobal_chainConfigNeedsTheChainService(t *testing.T) {
 // at params.BlockIntervalSeconds. The chain module is a separate Go module, so
 // the interval is read from its source.
 func TestChainMinRetainBlocks_isFourteenDaysOfTheChainsBlocks(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "chain", "app", "params", "params.go"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "repo", "chain", "app", "params", "params.go"))
 	if err != nil {
 		t.Fatalf("read the chain's params: %v", err)
 	}

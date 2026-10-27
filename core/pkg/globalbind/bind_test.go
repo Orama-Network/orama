@@ -20,7 +20,7 @@ const (
 )
 
 func TestSignBytesMatchesChainSource(t *testing.T) {
-	data, err := os.ReadFile("../../../chain/x/nodes/types/binding.go")
+	data, err := os.ReadFile("../../testdata/repo/chain/x/nodes/types/binding.go")
 	if err != nil {
 		t.Fatal(err)
 	}

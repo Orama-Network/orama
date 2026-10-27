@@ -72,7 +72,10 @@ func TestFlags(t *testing.T) {
 	}
 }
 
-// guidePath finds website/src/docs/operator/run-your-own-cluster.mdx from the package directory.
+// guidePath finds website/src/docs/operator/run-your-own-cluster.mdx through
+// the module's testdata/repo link, walking up from the package directory. The
+// guide lives above the module; reading it through a path inside the module is
+// what makes the go test cache treat it as an input.
 func guidePath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -80,7 +83,7 @@ func guidePath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for ; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-		p := filepath.Join(dir, "website", "src", "docs", "operator", "run-your-own-cluster.mdx")
+		p := filepath.Join(dir, "testdata", "repo", "website", "src", "docs", "operator", "run-your-own-cluster.mdx")
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
