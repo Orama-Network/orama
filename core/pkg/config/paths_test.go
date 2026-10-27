@@ -176,6 +176,9 @@ func TestDefaultPath(t *testing.T) {
 	})
 
 	t.Run("relative component returns path under orama dir", func(t *testing.T) {
+		// DefaultPath looks for existing files under ~/.orama; the test's
+		// home is its own, not whatever the machine running it holds.
+		t.Setenv("HOME", t.TempDir())
 		got, err := DefaultPath("node.yaml")
 		if err != nil {
 			t.Fatalf("DefaultPath() returned error: %v", err)

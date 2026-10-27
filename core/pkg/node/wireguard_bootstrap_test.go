@@ -24,6 +24,11 @@ type wgRowsDriver struct {
 
 func (d *wgRowsDriver) Open(string) (driver.Conn, error) { return &wgRowsConn{d: d}, nil }
 
+// Connect and Driver make the driver its own connector, so a test opens it
+// with sql.OpenDB instead of registering a global name.
+func (d *wgRowsDriver) Connect(context.Context) (driver.Conn, error) { return d.Open("") }
+func (d *wgRowsDriver) Driver() driver.Driver                        { return d }
+
 type wgRowsConn struct{ d *wgRowsDriver }
 
 func (c *wgRowsConn) Prepare(string) (driver.Stmt, error) { return &wgRowsStmt{d: c.d}, nil }
@@ -64,12 +69,7 @@ func (r *wgRows) Next(dest []driver.Value) error {
 
 func openWGDB(t *testing.T, d *wgRowsDriver) *sql.DB {
 	t.Helper()
-	name := "wgrows-" + t.Name()
-	sql.Register(name, d)
-	db, err := sql.Open(name, "")
-	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
-	}
+	db := sql.OpenDB(d)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
