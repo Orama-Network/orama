@@ -13,8 +13,10 @@
 //	ws_close(reasonPtr, reasonLen) → void
 //
 // The host calls each export at the appropriate lifecycle point. Frames
-// are processed serially per connection — wazero instances are NOT
-// goroutine-safe.
+// are processed serially per connection, in arrival order — wazero instances
+// are NOT goroutine-safe and cannot yield inside a host call, so a frame
+// blocked in a synchronous host call holds the frames behind it. Slow work
+// belongs in function_invoke_async (see Instance.Run).
 //
 // Replies use the existing ws_send / ws_broadcast host functions; the
 // function caches its own client_id (passed in ws_open) for outbound writes.

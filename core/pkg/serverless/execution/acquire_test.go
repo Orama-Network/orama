@@ -20,7 +20,7 @@ func acquireWithin(e *Executor, ns string, d time.Duration) (func(), error) {
 // slots (one per namespace), a second call from "a" queues on a's slot; it must
 // not hold the second process slot while it waits, or "b" could never run.
 func TestAcquire_aQueuedBurstDoesNotStarveAnotherNamespace(t *testing.T) {
-	e := NewExecutor(nil, zap.NewNop(), 2)
+	e := NewExecutor(nil, zap.NewNop(), 2, 0)
 	releaseA, err := acquireWithin(e, "a", time.Second)
 	if err != nil {
 		t.Fatalf("first call of a: %v", err)
@@ -47,7 +47,7 @@ func TestAcquire_aQueuedBurstDoesNotStarveAnotherNamespace(t *testing.T) {
 }
 
 func TestAcquire_releaseFreesBothSlots(t *testing.T) {
-	e := NewExecutor(nil, zap.NewNop(), 2)
+	e := NewExecutor(nil, zap.NewNop(), 2, 0)
 	for i := 0; i < 3; i++ {
 		release, err := acquireWithin(e, "a", 200*time.Millisecond)
 		if err != nil {
@@ -61,7 +61,7 @@ func TestAcquire_releaseFreesBothSlots(t *testing.T) {
 }
 
 func TestAcquire_aCancelledWaitGivesBackTheNamespaceSlot(t *testing.T) {
-	e := NewExecutor(nil, zap.NewNop(), 2)
+	e := NewExecutor(nil, zap.NewNop(), 2, 0)
 	hold := []func(){}
 	for _, ns := range []string{"x", "y"} {
 		release, err := acquireWithin(e, ns, time.Second)
@@ -81,8 +81,42 @@ func TestAcquire_aCancelledWaitGivesBackTheNamespaceSlot(t *testing.T) {
 	}
 }
 
+// TestAcquire_perNamespaceShare: by default one namespace gets half of the
+// process slots; a namespace gateway, which runs one namespace, gives it every
+// slot (bug-963: a namespace gateway used to run at most half of its slots).
+func TestAcquire_perNamespaceShare(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		max, perNS int
+		wantPerNS  int
+	}{
+		{"default is half", 10, 0, 5},
+		{"single tenant takes every slot", 10, 10, 10},
+		{"above the process cap is clamped", 4, 9, 4},
+		{"never below one", 1, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := NewExecutor(nil, zap.NewNop(), tc.max, tc.perNS)
+			var held []func()
+			for i := 0; i < tc.wantPerNS; i++ {
+				release, err := acquireWithin(e, "a", time.Second)
+				if err != nil {
+					t.Fatalf("slot %d of %d: %v", i+1, tc.wantPerNS, err)
+				}
+				held = append(held, release)
+			}
+			if _, err := acquireWithin(e, "a", 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("slot %d: want the namespace to be full, got %v", tc.wantPerNS+1, err)
+			}
+			for _, release := range held {
+				release()
+			}
+		})
+	}
+}
+
 func TestAcquire_unboundedExecutorNeedsNoSlot(t *testing.T) {
-	e := NewExecutor(nil, zap.NewNop(), 0)
+	e := NewExecutor(nil, zap.NewNop(), 0, 0)
 	release, err := acquireWithin(e, "", time.Millisecond)
 	if err != nil {
 		t.Fatalf("unbounded: %v", err)

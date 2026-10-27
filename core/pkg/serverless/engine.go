@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -99,6 +100,15 @@ type Engine struct {
 	// functions never touch it. Each warmed instance serves exactly one call
 	// and is then closed (isolation identical to fresh-instance-per-call).
 	reactorPool *reactorPool
+
+	// compilationCache is wazero's on-disk cache of compiled code, nil when
+	// Config.CompilationCacheDir is empty. Closed after the runtime.
+	compilationCache wazero.CompilationCache
+
+	// prewarmer compiles the served namespace's functions ahead of their first
+	// call (prewarm.go). nil until StartPrewarm; atomic because a deploy
+	// handler kicks it while the post-schema step may still be starting it.
+	prewarmer atomic.Pointer[prewarmer]
 }
 
 // Reactor pre-warm pool sizing (bugboard #898).
@@ -128,6 +138,24 @@ type InvocationRecord struct {
 	ErrorMessage string           `json:"error_message,omitempty"`
 	MemoryUsedMB float64          `json:"memory_used_mb"`
 	Logs         []LogEntry       `json:"logs,omitempty"`
+
+	// Where the duration went (bug-963). NodeID is the peer ID of the node
+	// whose gateway ran the invocation; QueueMS the wait for an execution
+	// slot; LoadMS fetching and compiling the module (0 when it was in
+	// memory); DBCalls and DBMS the database host calls and their summed wall
+	// time.
+	NodeID  string `json:"node_id,omitempty"`
+	QueueMS int64  `json:"queue_ms"`
+	LoadMS  int64  `json:"load_ms"`
+	DBCalls int64  `json:"db_calls"`
+	DBMS    int64  `json:"db_ms"`
+}
+
+// invocationPhases is what Execute measured of one invocation, for its record.
+type invocationPhases struct {
+	queue time.Duration
+	load  time.Duration
+	db    *DBUsage
 }
 
 // RateLimiter is the legacy single-bucket rate-limit interface, kept for
@@ -178,6 +206,19 @@ func NewEngine(cfg *Config, registry FunctionRegistry, hostServices HostServices
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(maxPages)
 
+	// Compiled machine code on disk (bug-963): compiling a TinyGo module takes
+	// seconds on a node, reading it back takes milliseconds. Without it every
+	// restart, and every module the LRU evicted, compiled again on a request.
+	var compilationCache wazero.CompilationCache
+	if cfg.CompilationCacheDir != "" {
+		cc, err := wazero.NewCompilationCacheWithDir(cfg.CompilationCacheDir)
+		if err != nil {
+			return nil, fmt.Errorf("compilation cache %s: %w", cfg.CompilationCacheDir, err)
+		}
+		compilationCache = cc
+		runtimeConfig = runtimeConfig.WithCompilationCache(cc)
+	}
+
 	runtime := wazero.NewRuntimeWithConfig(context.Background(), runtimeConfig)
 
 	// Instantiate WASI with a CUSTOM `proc_exit` that does NOT close the
@@ -227,8 +268,10 @@ func NewEngine(cfg *Config, registry FunctionRegistry, hostServices HostServices
 		hostServices: hostServices,
 		logger:       logger,
 		moduleCache:  cache.NewModuleCache(cfg.ModuleCacheSize, logger),
-		executor:     execution.NewExecutor(runtime, logger, cfg.MaxConcurrentExecutions),
+		executor:     execution.NewExecutor(runtime, logger, cfg.MaxConcurrentExecutions, cfg.MaxConcurrentPerNamespace),
 		lifecycle:    execution.NewModuleLifecycle(runtime, logger),
+
+		compilationCache: compilationCache,
 	}
 
 	// Reactor pre-warm pool (bugboard #898). The warmer reuses the engine's
@@ -369,6 +412,10 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 	// for every invocation, so a reused reactor instance cannot report a
 	// previous request's error.
 	execCtx = WithInvokeErrorSlot(execCtx)
+	// And a database usage counter, so the record can say how much of the
+	// duration was spent in database calls (bug-963).
+	execCtx, dbUsage := WithDBUsage(execCtx)
+	phases := invocationPhases{db: dbUsage}
 	defer logBudget.Summarize(e.logger, zap.String("namespace", invCtx.Namespace),
 		zap.String("function", fn.Name), zap.String("request_id", invCtx.RequestID))
 
@@ -384,11 +431,13 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 	// Get compiled module (from cache or compile)
 	module, err := e.getOrCompileModule(execCtx, fn.WASMCID)
 	if err != nil {
-		e.logInvocation(ctx, fn, invCtx, logBuf, startTime, 0, InvocationStatusError, err)
+		phases.load = time.Since(ratelimitDoneAt)
+		e.logInvocation(ctx, fn, invCtx, logBuf, startTime, phases, 0, InvocationStatusError, err)
 		e.logSlowInvocation(invCtx, startTime, ratelimitDoneAt, moduleLoadedAt, executeDoneAt, 0, "module-load-failed", err)
 		return nil, &ExecutionError{FunctionName: fn.Name, RequestID: invCtx.RequestID, Cause: err}
 	}
 	moduleLoadedAt = time.Now()
+	phases.load = moduleLoadedAt.Sub(ratelimitDoneAt)
 
 	// Attach a collector so ExecuteModule reports how long instantiate (TinyGo
 	// _start cold-start) took, letting the slow-invoke diagnostic split the
@@ -407,13 +456,14 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 		output, err = e.executor.ExecuteModule(execCtx, module, fn.Name, input)
 	}
 	executeDoneAt = time.Now()
+	phases.queue = time.Duration(instTiming.QueueNs)
 	if err != nil {
 		status := InvocationStatusError
 		if execCtx.Err() == context.DeadlineExceeded {
 			status = InvocationStatusTimeout
 			err = ErrTimeout
 		}
-		e.logInvocation(ctx, fn, invCtx, logBuf, startTime, len(output), status, err)
+		e.logInvocation(ctx, fn, invCtx, logBuf, startTime, phases, len(output), status, err)
 		e.logSlowInvocation(invCtx, startTime, ratelimitDoneAt, moduleLoadedAt, executeDoneAt, instTiming.InstantiateNs, string(status), err)
 		return nil, &ExecutionError{FunctionName: fn.Name, RequestID: invCtx.RequestID, Cause: err}
 	}
@@ -426,7 +476,7 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 		invCtx.RawHTTP = &res
 	}
 
-	e.logInvocation(ctx, fn, invCtx, logBuf, startTime, len(output), InvocationStatusSuccess, nil)
+	e.logInvocation(ctx, fn, invCtx, logBuf, startTime, phases, len(output), InvocationStatusSuccess, nil)
 	e.logSlowInvocation(invCtx, startTime, ratelimitDoneAt, moduleLoadedAt, executeDoneAt, instTiming.InstantiateNs, "success", nil)
 	return output, nil
 }
@@ -487,7 +537,9 @@ func (e *Engine) logSlowInvocation(invCtx *InvocationContext, startTime, ratelim
 	e.logger.Warn("slow serverless invocation (bug-24 diagnostic)", fields...)
 }
 
-// Precompile compiles a WASM module and caches it for faster execution.
+// Precompile compiles a WASM module ahead of its first call so that call does
+// not pay the compile (bug-963). The prewarmer calls it for every function of
+// the served namespace.
 func (e *Engine) Precompile(ctx context.Context, wasmCID string, wasmBytes []byte) error {
 	if wasmCID == "" {
 		return &ValidationError{Field: "wasmCID", Message: "cannot be empty"}
@@ -513,7 +565,13 @@ func (e *Engine) Precompile(ctx context.Context, wasmCID string, wasmBytes []byt
 		return &DeployError{FunctionName: wasmCID, Cause: err}
 	}
 
-	// Cache the compiled module
+	// With the on-disk cache the compile is kept there, and the module is
+	// loaded into memory only by a call that needs it: warming a namespace
+	// must not fill memory with modules nobody calls, nor evict one serving
+	// traffic. Without it, the module cache is the only place to keep it.
+	if e.compilationCache != nil {
+		return compiled.Close(ctx)
+	}
 	e.moduleCache.Set(wasmCID, compiled)
 
 	return nil
@@ -531,6 +589,11 @@ func (e *Engine) Invalidate(wasmCID string) {
 
 // Close shuts down the engine and releases resources.
 func (e *Engine) Close(ctx context.Context) error {
+	// Stop compiling ahead before the modules and the runtime go away.
+	if p := e.prewarmer.Load(); p != nil {
+		p.stop()
+	}
+
 	// Flush any pending invocation telemetry first (best-effort, bounded —
 	// see invocationLogQueue.Close). Losing a few records at shutdown is
 	// acceptable; blocking the process on telemetry is not.
@@ -546,8 +609,12 @@ func (e *Engine) Close(ctx context.Context) error {
 	// Close all cached modules
 	e.moduleCache.Clear(ctx)
 
-	// Close the runtime
-	return e.runtime.Close(ctx)
+	// Close the runtime, then the on-disk cache it compiled through.
+	err := e.runtime.Close(ctx)
+	if e.compilationCache != nil {
+		err = errors.Join(err, e.compilationCache.Close(ctx))
+	}
+	return err
 }
 
 // GetCacheStats returns cache statistics.
@@ -882,7 +949,7 @@ func (e *Engine) getOrCompileModule(ctx context.Context, wasmCID string) (wazero
 // cross-contamination. When nil (legacy callers that haven't been
 // updated), falls back to the HostFunctions singleton via the
 // GetLogs() interface check — same behavior as pre-#108.
-func (e *Engine) logInvocation(ctx context.Context, fn *Function, invCtx *InvocationContext, logBuf *LogBuffer, startTime time.Time, outputSize int, status InvocationStatus, err error) {
+func (e *Engine) logInvocation(ctx context.Context, fn *Function, invCtx *InvocationContext, logBuf *LogBuffer, startTime time.Time, phases invocationPhases, outputSize int, status InvocationStatus, err error) {
 	_ = ctx // request context is intentionally not used for the async write
 	if e.logQueue == nil || !e.config.LogInvocations {
 		return
@@ -900,6 +967,13 @@ func (e *Engine) logInvocation(ctx context.Context, fn *Function, invCtx *Invoca
 		CompletedAt:  completedAt,
 		DurationMS:   completedAt.Sub(startTime).Milliseconds(),
 		Status:       status,
+		NodeID:       e.config.NodeID,
+		QueueMS:      phases.queue.Milliseconds(),
+		LoadMS:       phases.load.Milliseconds(),
+	}
+	if phases.db != nil {
+		record.DBCalls = phases.db.Calls()
+		record.DBMS = phases.db.Duration().Milliseconds()
 	}
 
 	if err != nil {

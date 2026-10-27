@@ -176,6 +176,18 @@ func (g *Gateway) afterReadySteps(life context.Context, cfg *Config, deps *Depen
 			run:  onceSucceeded(g.pubsubDispatcher.Start),
 		})
 	}
+	// It lists the namespace's functions table, so it starts once the schema
+	// exists. StartPrewarm does nothing on a gateway that serves no single
+	// namespace or keeps no compiled code on disk (bug-963).
+	if g.serverlessEngine != nil && isNamespaceGateway(cfg) {
+		steps = append(steps, postSchemaStep{
+			name: "start compiling the namespace's functions ahead of their first call",
+			run: onceSucceeded(func(context.Context) error {
+				g.serverlessEngine.StartPrewarm(cfg.ClientNamespace)
+				return nil
+			}),
+		})
+	}
 	if g.cronScheduler != nil {
 		steps = append(steps, postSchemaStep{
 			name: "start the cron scheduler",

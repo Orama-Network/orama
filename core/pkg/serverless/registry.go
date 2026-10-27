@@ -786,13 +786,15 @@ func (r *Registry) Log(ctx context.Context, inv *InvocationRecord) error {
 		INSERT INTO function_invocations (
 			id, function_id, request_id, trigger_type, caller_wallet,
 			input_size, output_size, started_at, completed_at,
-			duration_ms, status, error_message, memory_used_mb
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			duration_ms, status, error_message, memory_used_mb,
+			node_id, queue_ms, load_ms, db_calls, db_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := r.db.Exec(ctx, invQuery,
 		inv.ID, inv.FunctionID, inv.RequestID, string(inv.TriggerType), inv.CallerWallet,
 		inv.InputSize, inv.OutputSize, inv.StartedAt, inv.CompletedAt,
 		inv.DurationMS, string(inv.Status), inv.ErrorMessage, inv.MemoryUsedMB,
+		inv.NodeID, inv.QueueMS, inv.LoadMS, inv.DBCalls, inv.DBMS,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert invocation record: %w", err)
@@ -906,7 +908,10 @@ func (r *Registry) GetInvocations(ctx context.Context, namespace, name string, l
 	invQuery := `
 		SELECT i.id, i.request_id, i.trigger_type, i.caller_wallet,
 			i.input_size, i.output_size, i.started_at, i.completed_at,
-			i.duration_ms, i.status, i.error_message, i.memory_used_mb
+			i.duration_ms, i.status, i.error_message, i.memory_used_mb,
+			COALESCE(i.node_id, '') AS node_id, COALESCE(i.queue_ms, 0) AS queue_ms,
+			COALESCE(i.load_ms, 0) AS load_ms, COALESCE(i.db_calls, 0) AS db_calls,
+			COALESCE(i.db_ms, 0) AS db_ms
 		FROM function_invocations i
 		JOIN functions f ON i.function_id = f.id
 		WHERE f.namespace = ? AND f.name = ?
@@ -926,6 +931,11 @@ func (r *Registry) GetInvocations(ctx context.Context, namespace, name string, l
 		Status       string    `db:"status"`
 		ErrorMessage string    `db:"error_message"`
 		MemoryUsedMB float64   `db:"memory_used_mb"`
+		NodeID       string    `db:"node_id"`
+		QueueMS      int64     `db:"queue_ms"`
+		LoadMS       int64     `db:"load_ms"`
+		DBCalls      int64     `db:"db_calls"`
+		DBMS         int64     `db:"db_ms"`
 	}
 	if err := r.db.Query(ctx, &rows, invQuery, namespace, name, limit); err != nil {
 		return nil, fmt.Errorf("failed to query invocations: %w", err)
@@ -983,6 +993,11 @@ func (r *Registry) GetInvocations(ctx context.Context, namespace, name string, l
 			Status:       row.Status,
 			ErrorMessage: row.ErrorMessage,
 			MemoryUsedMB: row.MemoryUsedMB,
+			NodeID:       row.NodeID,
+			QueueMS:      row.QueueMS,
+			LoadMS:       row.LoadMS,
+			DBCalls:      row.DBCalls,
+			DBMS:         row.DBMS,
 			WASMLogs:     logsByInv[row.ID],
 		}
 	}

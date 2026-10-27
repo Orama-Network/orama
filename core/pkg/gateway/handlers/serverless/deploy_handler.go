@@ -165,6 +165,12 @@ func (h *ServerlessHandlers) DeployFunction(w http.ResponseWriter, r *http.Reque
 		)
 	}
 
+	// Compile the new version now rather than on its first call (bug-963).
+	// The namespace's other gateways pick it up on their next prewarm sweep.
+	if h.engine != nil {
+		h.engine.KickPrewarm()
+	}
+
 	h.logger.Info("Function deployed",
 		zap.String("name", def.Name),
 		zap.String("namespace", def.Namespace),

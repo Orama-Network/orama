@@ -142,19 +142,26 @@ type FunctionRegistry interface {
 // `orama function logs`. Mirrors registry.Invocation; defined here at the
 // public package boundary so callers don't need to import the inner package.
 type Invocation struct {
-	ID           string     `json:"id"`
-	RequestID    string     `json:"request_id"`
-	TriggerType  string     `json:"trigger_type"`
-	CallerWallet string     `json:"caller_wallet,omitempty"`
-	InputSize    int        `json:"input_size"`
-	OutputSize   int        `json:"output_size"`
-	StartedAt    time.Time  `json:"started_at"`
-	CompletedAt  time.Time  `json:"completed_at"`
-	DurationMS   int64      `json:"duration_ms"`
-	Status       string     `json:"status"`
-	ErrorMessage string     `json:"error_message,omitempty"`
-	MemoryUsedMB float64    `json:"memory_used_mb,omitempty"`
-	WASMLogs     []LogEntry `json:"wasm_logs,omitempty"`
+	ID           string    `json:"id"`
+	RequestID    string    `json:"request_id"`
+	TriggerType  string    `json:"trigger_type"`
+	CallerWallet string    `json:"caller_wallet,omitempty"`
+	InputSize    int       `json:"input_size"`
+	OutputSize   int       `json:"output_size"`
+	StartedAt    time.Time `json:"started_at"`
+	CompletedAt  time.Time `json:"completed_at"`
+	DurationMS   int64     `json:"duration_ms"`
+	Status       string    `json:"status"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	MemoryUsedMB float64   `json:"memory_used_mb,omitempty"`
+	// Where duration_ms went (bug-963; InvocationRecord). Zero and empty on
+	// records written before migration 096.
+	NodeID   string     `json:"node_id,omitempty"`
+	QueueMS  int64      `json:"queue_ms"`
+	LoadMS   int64      `json:"load_ms"`
+	DBCalls  int64      `json:"db_calls"`
+	DBMS     int64      `json:"db_ms"`
+	WASMLogs []LogEntry `json:"wasm_logs,omitempty"`
 }
 
 // FunctionExecutor handles the actual execution of WASM functions.

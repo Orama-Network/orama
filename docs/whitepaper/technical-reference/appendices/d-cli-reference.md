@@ -1566,8 +1566,11 @@ orama function logs <name> [flags]
 Retrieves the most recent invocations for a deployed function.
 
 Each invocation record shows: timestamp, request_id, status, duration_ms,
-and (if any) the error message. WASM functions that emit log entries via
-log_info / log_error have those entries nested under each record.
+and (if any) the error message. A second line says where the duration went:
+the node whose gateway ran it, the wait for an execution slot (queue), loading
+the module (load: 0 when it was in memory) and the database calls with their
+summed time (db). WASM functions that emit log entries via log_info /
+log_error have those entries nested under each record.
 
 Pass --wasm-only to retrieve only the WASM-emitted log lines (legacy
 behavior; rarely useful on functions that don't call log_info).

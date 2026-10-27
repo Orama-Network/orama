@@ -27,8 +27,11 @@ var LogsCmd = &cobra.Command{
 	Long: `Retrieves the most recent invocations for a deployed function.
 
 Each invocation record shows: timestamp, request_id, status, duration_ms,
-and (if any) the error message. WASM functions that emit log entries via
-log_info / log_error have those entries nested under each record.
+and (if any) the error message. A second line says where the duration went:
+the node whose gateway ran it, the wait for an execution slot (queue), loading
+the module (load: 0 when it was in memory) and the database calls with their
+summed time (db). WASM functions that emit log entries via log_info /
+log_error have those entries nested under each record.
 
 Pass --wasm-only to retrieve only the WASM-emitted log lines (legacy
 behavior; rarely useful on functions that don't call log_info).`,
@@ -90,6 +93,13 @@ func printInvocations(name string, result map[string]interface{}) error {
 		// Header line per invocation.
 		fmt.Printf("[%s] %s  request=%s  duration=%sms\n",
 			started, strings.ToUpper(status), reqID, duration)
+		// Where the duration went (bug-963). A record written before the
+		// gateway recorded it has no node.
+		if node := valStr(inv, "node_id"); node != "" {
+			fmt.Printf("  node=%s  queue=%sms  load=%sms  db=%s calls/%sms\n",
+				node, valNumberAsString(inv, "queue_ms"), valNumberAsString(inv, "load_ms"),
+				valNumberAsString(inv, "db_calls"), valNumberAsString(inv, "db_ms"))
+		}
 		if errMsg != "" {
 			fmt.Printf("  error: %s\n", errMsg)
 		}

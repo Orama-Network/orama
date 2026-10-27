@@ -198,7 +198,7 @@ func TestExecuteModule_recordsInstantiateTiming(t *testing.T) {
 	}
 	defer compiled.Close(ctx)
 
-	ex := NewExecutor(runtime, zap.NewNop(), 0)
+	ex := NewExecutor(runtime, zap.NewNop(), 0, 0)
 
 	tctx, timing := WithInstantiateTiming(ctx)
 	if _, err := ex.ExecuteModule(tctx, compiled, "probe", nil); err != nil {

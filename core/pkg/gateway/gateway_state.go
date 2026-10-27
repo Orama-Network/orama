@@ -24,6 +24,14 @@ import (
 // Each gateway writes only to its StateDir now,
 // <oramaDir>/data/namespaces/<ns>/gateway (0700): jwt-signing-key.pem,
 // jwt-eddsa-key.pem and the encryption-root cache files sit directly in it.
+// A namespace gateway also keeps wazero's compiled function code in its
+// compilationCacheDirName subdirectory (bug-963).
+
+// compilationCacheDirName is the StateDir subdirectory of a namespace
+// gateway's on-disk WASM compilation cache (serverless.Config
+// CompilationCacheDir). It is private to the gateway because wazero maps what
+// it reads there as executable code.
+const compilationCacheDirName = "wasm-compiled"
 
 // ensureStateDir creates the gateway's state directory, 0700 to the orama user.
 func ensureStateDir(dir string) error {

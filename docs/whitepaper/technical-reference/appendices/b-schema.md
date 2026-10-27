@@ -417,6 +417,11 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `status` | TEXT | no | - |  |
 | `error_message` | TEXT | no | - |  |
 | `memory_used_mb` | REAL | no | - |  |
+| `node_id` | TEXT | no | - |  |
+| `queue_ms` | INTEGER | no | - |  |
+| `load_ms` | INTEGER | no | - |  |
+| `db_calls` | INTEGER | no | - |  |
+| `db_ms` | INTEGER | no | - |  |
 
 ## function_jobs
 
