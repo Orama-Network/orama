@@ -276,13 +276,13 @@ func TestAdmissionStore_aTableBefore075IsReportedAsUnmigrated(t *testing.T) {
 			PRIMARY KEY (namespace, room, user_id, device_id))`)
 	s := NewAdmissionStore(client)
 	_, err := s.Lookup(context.Background(), "ns", "r1", "alice", "")
-	if err == nil || !strings.Contains(err.Error(), "migrations 075 and 094 have not been applied") || strings.Contains(err.Error(), "drop it") {
-		t.Fatalf("Lookup err = %v, want one saying 075 and 094 are not applied yet, not to drop the table", err)
+	if err == nil || !strings.Contains(err.Error(), "migrations 075 and 095 have not been applied") || strings.Contains(err.Error(), "drop it") {
+		t.Fatalf("Lookup err = %v, want one saying 075 and 095 are not applied yet, not to drop the table", err)
 	}
 }
 
-// The platform's table as 075 left it, before 094 added video_muted.
-func TestAdmissionStore_aTableBefore094IsReportedAsUnmigrated(t *testing.T) {
+// The platform's table as 075 left it, before 095 added video_muted.
+func TestAdmissionStore_aTableBefore095IsReportedAsUnmigrated(t *testing.T) {
 	client, _ := rqlitetest.SQLite(t,
 		`CREATE TABLE webrtc_settings (namespace TEXT NOT NULL PRIMARY KEY, require_admission INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)`,
 		`CREATE TABLE webrtc_admissions (namespace TEXT NOT NULL, room TEXT NOT NULL, user_id TEXT NOT NULL, device_id TEXT NOT NULL DEFAULT '',
@@ -290,7 +290,7 @@ func TestAdmissionStore_aTableBefore094IsReportedAsUnmigrated(t *testing.T) {
 			generation INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (namespace, room, user_id, device_id))`)
 	s := NewAdmissionStore(client)
 	_, err := s.Lookup(context.Background(), "ns", "r1", "alice", "")
-	if err == nil || !strings.Contains(err.Error(), "lacks video_muted: migration 094 has not been applied") || strings.Contains(err.Error(), "drop it") {
-		t.Fatalf("Lookup err = %v, want one saying 094 is not applied yet", err)
+	if err == nil || !strings.Contains(err.Error(), "lacks video_muted: migration 095 has not been applied") || strings.Contains(err.Error(), "drop it") {
+		t.Fatalf("Lookup err = %v, want one saying 095 is not applied yet", err)
 	}
 }

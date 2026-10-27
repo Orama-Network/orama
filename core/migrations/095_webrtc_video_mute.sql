@@ -1,5 +1,5 @@
 -- =============================================================================
--- 094_webrtc_video_mute.sql
+-- 095_webrtc_video_mute.sql
 --
 -- A forced mute of a user's video in a WebRTC room (bugboard feat-964).
 --
@@ -16,4 +16,4 @@
 
 ALTER TABLE webrtc_admissions ADD COLUMN video_muted INTEGER NOT NULL DEFAULT 0;
 
-INSERT OR IGNORE INTO schema_migrations(version) VALUES (94);
+INSERT OR IGNORE INTO schema_migrations(version) VALUES (95);

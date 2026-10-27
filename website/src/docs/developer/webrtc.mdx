@@ -505,7 +505,7 @@ A join that is not admitted is refused before it reaches an SFU, with a typed er
 | The admission has expired | `WEBRTC_ADMISSION_EXPIRED` | `admission_expired` |
 | A function revoked it (`webrtc_kick`) | `WEBRTC_ADMISSION_REVOKED` | `admission_revoked` |
 | The admission records cannot be read | `SERVICE_UNAVAILABLE` (503, retryable) | `admission_unavailable` |
-| The admission tables are not the ones migrations 073, 075 and 094 make | `INTERNAL` (500, not retryable) | `admission_unavailable` |
+| The admission tables are not the ones migrations 073, 075 and 095 make | `INTERNAL` (500, not retryable) | `admission_unavailable` |
 
 A gateway that cannot read the records refuses the join; it never admits on a guess.
 
@@ -518,11 +518,11 @@ fix (rename or drop the tenant's table and re-apply the migration), on the join 
 host function and the settings route alike. Nothing reads or writes a table that is not the
 admission table. A table that does not exist at all (the migration has not reached the database yet) is the
 retryable `admission_unavailable`. The platform's own `webrtc_admissions` that lacks only columns later
-migrations add (`generation`, 075; `video_muted`, 094) is reported as those migrations not applied yet, not as
+migrations add (`generation`, 075; `video_muted`, 095) is reported as those migrations not applied yet, not as
 a foreign table: the namespace gateway applies them when it starts, and the next join checks again.
 
 Where it lives: the policy (`webrtc_settings`) and the admissions (`webrtc_admissions`) are tables of the
-**namespace's own database** (migrations 073, 075 and 094), checked by whichever namespace gateway takes the join. They
+**namespace's own database** (migrations 073, 075 and 095), checked by whichever namespace gateway takes the join. They
 are the tenant's own policy and grants, so no cluster-wide write sits on the join path; no SFU holds any of
 it, so it survives an SFU restart and is the same whichever node owns the room. A namespace that never turns
 the policy on keeps today's behaviour; the identity rule above applies either way.

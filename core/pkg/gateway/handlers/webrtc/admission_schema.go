@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Migration 073 creates its tables IF NOT EXISTS, and 075 and 094 add columns.
+// Migration 073 creates its tables IF NOT EXISTS, and 075 and 095 add columns.
 // A namespace whose own database already had a table of the same name (a
 // tenant's, from before the platform used the name) keeps it, and every query
 // against it would then fail
@@ -21,7 +21,7 @@ import (
 // not been migrated yet; one missing anything else is not the platform's.
 var addedColumns = map[string]string{
 	"generation":  "075",
-	"video_muted": "094",
+	"video_muted": "095",
 }
 
 // errAdmissionSchema marks a refusal because a table is not the one migration 073
@@ -72,7 +72,7 @@ func (s *AdmissionStore) ensureSchema(ctx context.Context) error {
 		if len(cols) == 0 {
 			// Not a mismatch: the migration may simply not have reached this
 			// database yet, and a retry can find it.
-			return fmt.Errorf("table %s does not exist: are migrations 073, 075 and 094 applied to this namespace's database?", want.name)
+			return fmt.Errorf("table %s does not exist: are migrations 073, 075 and 095 applied to this namespace's database?", want.name)
 		}
 		if err := want.check(cols); err != nil {
 			return fmt.Errorf("%w: %v", errAdmissionSchema, err)
@@ -104,7 +104,7 @@ func (t tableShape) check(have []columnInfo) error {
 	if len(missing) > 0 && !onlyAdded {
 		sort.Strings(missing)
 		return fmt.Errorf("table %s in this namespace's database is not the WebRTC admission table: it lacks columns %s; "+
-			"it predates migration 073 (and 075 and 094, which do not replace an existing table), so rename or drop it and re-apply the migrations",
+			"it predates migration 073 (and 075 and 095, which do not replace an existing table), so rename or drop it and re-apply the migrations",
 			t.name, strings.Join(missing, ", "))
 	}
 	if len(key) != len(t.key) {

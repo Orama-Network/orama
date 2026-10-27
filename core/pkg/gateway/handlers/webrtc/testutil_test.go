@@ -23,7 +23,7 @@ const (
 func admissionDDL(t *testing.T) []string {
 	t.Helper()
 	stmts := []string{`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)`}
-	for _, name := range []string{"073_webrtc_admissions.sql", "075_webrtc_admission_generation.sql", "094_webrtc_video_mute.sql"} {
+	for _, name := range []string{"073_webrtc_admissions.sql", "075_webrtc_admission_generation.sql", "095_webrtc_video_mute.sql"} {
 		ddl, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatalf("read migration: %v", err)

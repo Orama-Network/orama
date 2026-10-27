@@ -24,7 +24,7 @@ const generationRetention = 2 * ctrlauth.TicketTTL
 const mutedRetention = 7 * 24 * time.Hour
 
 // AdmissionStore is where a namespace's WebRTC policy and the admissions its
-// functions issued live: the namespace's own database (migrations 073, 075 and 094), read on
+// functions issued live: the namespace's own database (migrations 073, 075 and 095), read on
 // the join path of its gateways. No SFU holds any of it, so it survives an SFU
 // restart and is the same whichever node owns the room.
 type AdmissionStore struct {
