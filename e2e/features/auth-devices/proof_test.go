@@ -17,6 +17,8 @@ import (
 const (
 	// proofWindow: "iat must be within 60 seconds of the gateway's clock".
 	proofWindow = 60 * time.Second
+	// skewedClock is how far off the phone's clock is in the bug-961 report.
+	skewedClock = 10 * time.Minute
 	// deviceRefreshPrefix marks a device-bound refresh token (docs/whitepaper/technical-reference/vol1/13-identity.md#signing-in-with-a-device).
 	deviceRefreshPrefix = "dv1_"
 )
@@ -69,6 +71,53 @@ type proofCase struct {
 	code string
 }
 
+// TestDeviceRefresh_aSkewedClockIsToldTheGatewaysTime: a phone whose clock is
+// ten minutes ahead or behind is refused by name (DEVICE_PROOF_CLOCK_SKEW),
+// not as a forged or replayed proof, and the refusal and every answer's Date
+// header carry the gateway's clock. A proof stamped on that clock refreshes;
+// replaying it is still refused, as is every spent proof (bug-961,
+// docs/whitepaper/technical-reference/vol1/13-identity.md#device-proofs).
+func TestDeviceRefresh_aSkewedClockIsToldTheGatewaysTime(t *testing.T) {
+	t.Parallel()
+	f := harness.Fleet(t)
+	n := ns.New(t, f, ns.Options{})
+	c := harness.GW(t)
+	d := gw.NewDevice(t, wallet.AlgEd25519)
+	s := signInSession(t, c, member(t, n, roleRuntime), n.Name, d)
+	rt := s.RefreshToken
+	for name, skew := range map[string]time.Duration{"ahead": skewedClock, "behind": -skewedClock} {
+		skewed, err := d.ProofAt(wallet.ProofRefresh, n.Name, rt, time.Now().Add(skew), randomB64(t, 24))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := refreshWith(t, c, rt, n.Name, skewed)
+		body := expectCode(t, resp, http.StatusUnauthorized, "DEVICE_PROOF_CLOCK_SKEW")
+		serverTime, ok := body["server_time"].(float64)
+		if !ok {
+			t.Fatalf("a clock %s: the refusal carries no server_time: %s", name, resp.Body)
+		}
+		if drift := time.Since(time.Unix(int64(serverTime), 0)).Abs(); drift > proofWindow {
+			t.Errorf("a clock %s: server_time is %s from the runner's clock", name, drift)
+		}
+		date, err := http.ParseTime(resp.Header.Get("Date"))
+		if err != nil {
+			t.Errorf("a clock %s: the refusal has no Date header the SDK can read: %v", name, err)
+		} else if drift := date.Sub(time.Unix(int64(serverTime), 0)).Abs(); drift > 2*time.Second {
+			t.Errorf("a clock %s: Date %s and server_time %v disagree", name, date, serverTime)
+		}
+	}
+	corrected, err := d.ProofAt(wallet.ProofRefresh, n.Name, rt, time.Now(), randomB64(t, 24))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next gw.Session
+	if err := refreshWith(t, c, rt, n.Name, corrected).Expect(t, http.StatusOK).Decode(&next); err != nil {
+		t.Fatalf("the proof on the gateway's clock after two skew refusals (nothing was spent): %v", err)
+	}
+	protect(t, c, next.AccessToken, next.RefreshToken)
+	expectCodeNamed(t, "the corrected proof replayed", refreshWith(t, c, next.RefreshToken, n.Name, corrected), http.StatusUnauthorized, "DEVICE_PROOF_INVALID")
+}
+
 // badRefreshProofs is every way a refresh proof can be wrong: missing, stale,
 // from the future, a short id, another action, token, namespace or device.
 func badRefreshProofs(t testing.TB, d, other *wallet.Device, namespace, rt string) []proofCase {
@@ -83,8 +132,8 @@ func badRefreshProofs(t testing.TB, d, other *wallet.Device, namespace, rt strin
 	}
 	return []proofCase{
 		{"no proof", nil, "DEVICE_PROOF_REQUIRED"},
-		{"stale proof", at(now.Add(-2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_INVALID"},
-		{"proof from the future", at(now.Add(2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_INVALID"},
+		{"stale proof", at(now.Add(-2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_CLOCK_SKEW"},
+		{"proof from the future", at(now.Add(2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_CLOCK_SKEW"},
 		{"id too short", at(now, "tooShort"), "DEVICE_PROOF_INVALID"},
 		{"proof for another action", proof(t, d, wallet.ProofRevoke, namespace, rt), "DEVICE_PROOF_INVALID"},
 		{"proof over another token", proof(t, d, wallet.ProofRefresh, namespace, rt+"x"), "DEVICE_PROOF_INVALID"},

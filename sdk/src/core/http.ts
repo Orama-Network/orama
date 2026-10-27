@@ -1,4 +1,4 @@
-import { NetworkError, SDKError } from "../errors";
+import { AuthCode, NetworkError, SDKError } from "../errors";
 import { Logger } from "./logger";
 
 /**
@@ -131,6 +131,24 @@ export interface RequestOptions {
  */
 const MAX_RETRY_DELAY_MS = 30_000;
 
+/**
+ * A `Date` header names a whole second (RFC 9110, section 5.6.7): the
+ * gateway's clock read somewhere inside it, so its middle is the best
+ * estimate.
+ */
+const DATE_HEADER_MIDPOINT_MS = 500;
+
+/**
+ * The 401s that refuse a device proof in the request's body, not the bearer
+ * token in its header. Renewing the session cannot fix one, and replaying the
+ * request would present the same proof again.
+ */
+const DEVICE_PROOF_REFUSALS = new Set<string>([
+  AuthCode.DeviceProofRequired,
+  AuthCode.DeviceProofInvalid,
+  AuthCode.DeviceProofClockSkew,
+]);
+
 /** Fraction of the computed delay added as random jitter. */
 const RETRY_JITTER_RATIO = 0.25;
 
@@ -252,6 +270,8 @@ export class HttpClient {
   private exchanging?: Promise<void>;
   /** In-flight renewal, so concurrent 401s renew once between them. */
   private refreshing?: Promise<string | null>;
+  /** The gateway's clock minus this one, as its last answer showed it. */
+  private clockOffsetMs = 0;
   private readonly rootLogger: Logger;
   private readonly log: Logger;
 
@@ -654,7 +674,35 @@ export class HttpClient {
     // Renewing the session by calling the endpoint that renews the session
     // would recurse.
     if (path.startsWith("/v1/auth/refresh")) return false;
-    return error instanceof SDKError && error.httpStatus === 401;
+    return (
+      error instanceof SDKError &&
+      error.httpStatus === 401 &&
+      !DEVICE_PROOF_REFUSALS.has(error.code)
+    );
+  }
+
+  /**
+   * What the gateway's clock reads now, in milliseconds, as far as its answers
+   * have shown: this device's clock corrected by the offset the last one
+   * measured. A device proof is stamped with it, so a phone whose clock is
+   * minutes off still makes proofs inside the gateway's window.
+   */
+  serverNow(): number {
+    return Date.now() + this.clockOffsetMs;
+  }
+
+  /** Record what the gateway's clock read, in milliseconds, just now. */
+  observeServerTime(serverMs: number): void {
+    this.clockOffsetMs = serverMs - Date.now();
+  }
+
+  /** Every answer's `Date` header is the gateway's clock. */
+  private observeDateHeader(response: Response): void {
+    const date = response.headers?.get("date");
+    if (!date) return;
+    const serverMs = Date.parse(date);
+    if (Number.isNaN(serverMs)) return;
+    this.observeServerTime(serverMs + DATE_HEADER_MIDPOINT_MS);
   }
 
   /**
@@ -687,6 +735,7 @@ export class HttpClient {
 
     try {
       const response = await this.fetch(url, options);
+      this.observeDateHeader(response);
 
       if (!response.ok) {
         retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
@@ -897,6 +946,7 @@ export class HttpClient {
 
     try {
       const response = await this.fetch(url.toString(), fetchOptions);
+      this.observeDateHeader(response);
 
       // The timeout covers reaching the gateway, not draining the body. It
       // used to be left armed on the success path, so a download still

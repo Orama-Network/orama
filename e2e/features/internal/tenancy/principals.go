@@ -34,7 +34,15 @@ const (
 // are ended and its grant removed at cleanup.
 func Member(t testing.TB, n *ns.Namespace, role string) *gw.User {
 	t.Helper()
-	u, _ := grant(t, n, role, "")
+	u, _ := grant(t, n, role, "", nil)
+	return u
+}
+
+// DeviceMember is Member with the session bound to a fresh Ed25519 device,
+// whose key the returned user holds (gw.User.Device).
+func DeviceMember(t testing.TB, n *ns.Namespace, role string) *gw.User {
+	t.Helper()
+	u, _ := grant(t, n, role, "", gw.NewDevice(t, wallet.AlgEd25519))
 	return u
 }
 
@@ -50,11 +58,11 @@ type Selector struct {
 // SelectorMember grants a runtime role narrowed to resource.
 func SelectorMember(t testing.TB, n *ns.Namespace, resource string) Selector {
 	t.Helper()
-	u, enforced := grant(t, n, RoleRuntime, resource)
+	u, enforced := grant(t, n, RoleRuntime, resource, nil)
 	return Selector{Token: u.Token(), Enforced: enforced}
 }
 
-func grant(t testing.TB, n *ns.Namespace, role, resource string) (*gw.User, bool) {
+func grant(t testing.TB, n *ns.Namespace, role, resource string, device *wallet.Device) (*gw.User, bool) {
 	t.Helper()
 	w, err := wallet.NewEVM()
 	if err != nil {
@@ -71,11 +79,11 @@ func grant(t testing.TB, n *ns.Namespace, role, resource string) (*gw.User, bool
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { removeMember(t, n, w.Address()) })
-	s, err := n.Owner.Client.For(t).SignIn(t.Context(), w, n.Name, nil)
+	s, err := n.Owner.Client.For(t).SignIn(t.Context(), w, n.Name, device)
 	if err != nil {
 		t.Fatalf("a %s member could not sign in to %s: %v", role, n.Name, err)
 	}
-	u := &gw.User{Wallet: w, Session: s, Namespace: n.Name, Client: n.Owner.Client}
+	u := &gw.User{Wallet: w, Device: device, Session: s, Namespace: n.Name, Client: n.Owner.Client}
 	t.Cleanup(func() { logout(t, u) })
 	return u, granted.Enforced == nil || *granted.Enforced
 }

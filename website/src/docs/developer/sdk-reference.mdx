@@ -156,6 +156,8 @@ const result = await client.auth.verify({
 
 `deviceIdOf(publicJwk)` is the RFC 7638 thumbprint. A device-bound `verify` returns no API key; later refreshes sign a proof with the device key automatically, and without a signer `refresh()` throws `DEVICE_PROOF_REQUIRED`. When the namespace requires an existing device's approval, `verify` returns `{status: "pending_approval", user_code, device_code}` and stores nothing: show the user code, call `client.auth.approveDeviceLink(code)` on a device already signed in, then `client.auth.claimDeviceLink(device_code, namespace)` on the new one. `startDeviceLink({namespace})` starts a link with no wallet. `listDevices()` and `revokeDevice(id)` manage devices. `deviceProofMessage` is exported for a client that signs proofs itself.
 
+Every proof is stamped on the gateway's clock, not the phone's: the client keeps, in memory, how far the gateway's clock is from the phone's as each answer's `Date` header shows it, so a phone whose clock is minutes off still refreshes. When the very first request is the proof and the gateway refuses it for its time, the SDK signs a new proof on the `server_time` the refusal carries and sends it once more. If that fails as well, the error's code is `AuthCode.DeviceProofClockSkew` (`DEVICE_PROOF_CLOCK_SKEW`): the phone's clock moved again, which is worth telling the user, not a reason to sign them out. A device-proof refusal (`DEVICE_PROOF_REQUIRED`, `DEVICE_PROOF_INVALID`, `DEVICE_PROOF_CLOCK_SKEW`) is never answered by renewing the session and replaying the request: the refusal is about the proof in the body, not the token.
+
 ### Persisting tokens in a browser
 
 ```ts

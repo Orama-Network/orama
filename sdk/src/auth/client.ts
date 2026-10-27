@@ -1,10 +1,12 @@
 import { HttpClient } from "../core/http";
 import { Logger } from "../core/logger";
-import { AuthError, LogoutError, SDKError } from "../errors";
+import { AuthCode, AuthError, LogoutError, SDKError } from "../errors";
 import { WhoAmI, StorageAdapter, MemoryStorage } from "./types";
 import {
   DeviceInfo,
   DeviceLink,
+  DeviceProof,
+  DeviceProofAction,
   DeviceSigner,
   PendingDeviceApproval,
   makeDeviceProof,
@@ -197,23 +199,22 @@ export class AuthClient {
     }
     const namespace = (await this.storage.get("namespace")) ?? "default";
 
-    // A session bound to a device is refreshed by the device: the gateway
-    // refuses the refresh token alone.
-    const body: Record<string, unknown> = { refresh_token: refreshToken, namespace };
-    if (await this.storage.get(DEVICE_ID_KEY)) {
-      body.device_proof = await makeDeviceProof(
-        this.requireDeviceSigner("refresh"), "refresh", namespace, refreshToken
-      );
-    }
-
-    const response = await this.httpClient.post<{
+    interface RefreshResponse {
       access_token: string;
       refresh_token?: string;
       expires_in?: number;
       subject?: string;
       namespace?: string;
       token_type?: string;
-    }>("/v1/auth/refresh", body);
+    }
+    const body = { refresh_token: refreshToken, namespace };
+    // A session bound to a device is refreshed by the device: the gateway
+    // refuses the refresh token alone.
+    const response = (await this.storage.get(DEVICE_ID_KEY))
+      ? await this.sendWithProof("refresh", namespace, refreshToken, (device_proof) =>
+          this.httpClient.post<RefreshResponse>("/v1/auth/refresh", { ...body, device_proof })
+        )
+      : await this.httpClient.post<RefreshResponse>("/v1/auth/refresh", body);
 
     if (!response?.access_token) {
       throw new Error("refresh failed: server returned no access_token");
@@ -461,14 +462,15 @@ export class AuthClient {
   async revokeDevice(deviceId: string): Promise<void> {
     // From a device-bound session the device signs the revocation: a lifted
     // access token alone must not sign the account out of its other devices.
-    const body: Record<string, unknown> = {};
-    if (await this.storage.get(DEVICE_ID_KEY)) {
-      const namespace = (await this.storage.get("namespace")) ?? "default";
-      body.device_proof = await makeDeviceProof(
-        this.requireDeviceSigner("revoke"), "revoke", namespace, deviceId
-      );
+    const path = `/v1/auth/devices/${encodeURIComponent(deviceId)}`;
+    if (!(await this.storage.get(DEVICE_ID_KEY))) {
+      await this.httpClient.request("DELETE", path, { body: {} });
+      return;
     }
-    await this.httpClient.request("DELETE", `/v1/auth/devices/${encodeURIComponent(deviceId)}`, { body });
+    const namespace = (await this.storage.get("namespace")) ?? "default";
+    await this.sendWithProof("revoke", namespace, deviceId, (device_proof) =>
+      this.httpClient.request("DELETE", path, { body: { device_proof } })
+    );
   }
 
   /**
@@ -478,8 +480,9 @@ export class AuthClient {
   async approveDeviceLink(userCode: string): Promise<void> {
     const namespace = (await this.storage.get("namespace")) ?? "default";
     const code = normalizeUserCode(userCode);
-    const proof = await makeDeviceProof(this.requireDeviceSigner("approve"), "approve", namespace, code);
-    await this.httpClient.post("/v1/auth/devices/approve", { user_code: code, device_proof: proof });
+    await this.sendWithProof("approve", namespace, code, (device_proof) =>
+      this.httpClient.post("/v1/auth/devices/approve", { user_code: code, device_proof })
+    );
   }
 
   /**
@@ -502,13 +505,49 @@ export class AuthClient {
    * nobody has approved it yet the gateway answers `authorization_pending`.
    */
   async claimDeviceLink(deviceCode: string, namespace: string): Promise<SessionResponse> {
-    const proof = await makeDeviceProof(this.requireDeviceSigner("claim"), "claim", namespace, deviceCode);
-    const response = await this.httpClient.post<SessionResponse>("/v1/auth/device/token", {
-      device_code: deviceCode,
-      device_proof: proof,
-    });
+    const response = await this.sendWithProof("claim", namespace, deviceCode, (device_proof) =>
+      this.httpClient.post<SessionResponse>("/v1/auth/device/token", {
+        device_code: deviceCode,
+        device_proof,
+      })
+    );
     await this.storeSession(response);
     return response;
+  }
+
+  /**
+   * Send a request carrying a device proof, stamped on the gateway's clock.
+   *
+   * The proof's time is the gateway's as this client last saw it (every
+   * answer's `Date` header), so a phone whose own clock is minutes off still
+   * proves inside the gateway's window. When nothing has been heard from the
+   * gateway yet, the first proof goes on the device's clock; if the gateway
+   * refuses it for its time it answers with its own (`server_time`), and the
+   * proof is made again on that clock and sent once more. That is the
+   * refusal's purpose, as DPoP's `use_dpop_nonce` hands a client the nonce to
+   * use: a fresh proof with a new id, never the refused one replayed.
+   */
+  private async sendWithProof<T>(
+    action: DeviceProofAction,
+    namespace: string,
+    binding: string,
+    send: (proof: DeviceProof) => Promise<T>
+  ): Promise<T> {
+    const signer = this.requireDeviceSigner(action);
+    const prove = () => makeDeviceProof(signer, action, namespace, binding, this.httpClient.serverNow());
+    try {
+      return await send(await prove());
+    } catch (error) {
+      const serverTime =
+        error instanceof SDKError && error.code === AuthCode.DeviceProofClockSkew
+          ? error.details?.server_time
+          : undefined;
+      if (typeof serverTime !== "number") {
+        throw error;
+      }
+      this.httpClient.observeServerTime(serverTime * 1000);
+      return send(await prove());
+    }
   }
 
   private requireDeviceSigner(what: string): DeviceSigner {

@@ -60,7 +60,7 @@ orama-device-proof-v1
 <id>
 ```
 
-`iat` must be within 60 seconds of the gateway's clock, and `id` is spent in the nonce table, so a proof is good once, for one action on one credential. In a namespace that attests devices, an iOS app's refresh proof also carries `app_attest`, an App Attest assertion over `SHA-256(id ‖ device_id)` ([Device attestation](/docs/developer/device-attestation)). A refresh without the proof is refused before anything is spent, so a thief holding only the refresh token cannot use it up.
+`iat` must be within 60 seconds of the gateway's clock, and `id` is spent in the nonce table, so a proof is good once, for one action on one credential. A phone's clock can be minutes off (set by hand, a dead clock battery, a network serving the wrong time), so stamp `iat` on the gateway's clock: every answer's `Date` header is that clock, and a proof refused for its time answers `DEVICE_PROOF_CLOCK_SKEW` with `server_time` (unix seconds). Nothing is spent by that refusal; sign a new proof, with a new id, on `server_time`. The SDK does both on its own. A refusal for time is the phone's clock, never a forged or replayed proof: tell the user their clock is wrong rather than signing them out. In a namespace that attests devices, an iOS app's refresh proof also carries `app_attest`, an App Attest assertion over `SHA-256(id ‖ device_id)` ([Device attestation](/docs/developer/device-attestation)). A refresh without the proof is refused before anything is spent, so a thief holding only the refresh token cannot use it up.
 
 ## Revoking a device
 
@@ -128,7 +128,8 @@ A gateway that predates devices knows nothing of the policy, of device-bound sig
 | `DEVICE_KEY_INVALID` | The key is not a P-256 or Ed25519 public JWK, or is not the device the message names (400) |
 | `DEVICE_SIGNATURE_INVALID` | The device's signature over the sign-in message does not verify (401) |
 | `DEVICE_PROOF_REQUIRED` | A device-bound credential was presented without the device's proof (401) |
-| `DEVICE_PROOF_INVALID` | The proof is stale, reused, or not the device's (401) |
+| `DEVICE_PROOF_INVALID` | The proof is malformed, reused, or not the device's (401) |
+| `DEVICE_PROOF_CLOCK_SKEW` | The proof's time is more than 60 seconds from the gateway's clock; `server_time` is the gateway's clock (401) |
 | `DEVICE_REVOKED` | The device was revoked; its key can never hold a session again (403) |
 | `DEVICE_PENDING` | The device waits for another of the account's devices to approve it (403, or 202 on sign-in) |
 | `DEVICE_NOT_FOUND` | The account has no such device (404) |

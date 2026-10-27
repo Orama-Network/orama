@@ -170,8 +170,17 @@ export const AuthCode = {
   DeviceSignatureInvalid: "DEVICE_SIGNATURE_INVALID",
   /** A device-bound credential was sent without the device's proof. */
   DeviceProofRequired: "DEVICE_PROOF_REQUIRED",
-  /** The device proof is stale, reused, or not the device's. Make a fresh one. */
+  /** The device proof is malformed, reused, or not the device's. Make a fresh one. */
   DeviceProofInvalid: "DEVICE_PROOF_INVALID",
+  /**
+   * The device proof's time is outside the window around the gateway's clock:
+   * this device's clock is off. `details.server_time` is the gateway's clock
+   * (unix seconds). The SDK stamps its proofs on the gateway's clock and makes
+   * a refused one again on it, so an application sees this only when the
+   * clock moves again between the two; tell the user their clock is wrong
+   * rather than signing them out.
+   */
+  DeviceProofClockSkew: "DEVICE_PROOF_CLOCK_SKEW",
   /** The device was revoked; its key can never hold a session again. */
   DeviceRevoked: "DEVICE_REVOKED",
   /** The device waits for another of the account's devices to approve it. */

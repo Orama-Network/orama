@@ -406,7 +406,8 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 | `DEVICE_KEY_INVALID` | 400 | the key is not a P-256 or Ed25519 public JWK, or is not the device the message names |
 | `DEVICE_SIGNATURE_INVALID` | 401 | the device's signature over the sign-in message does not verify |
 | `DEVICE_PROOF_REQUIRED` | 401 | a device-bound credential was presented without the device's proof |
-| `DEVICE_PROOF_INVALID` | 401 | the proof is stale, reused, or not the device's |
+| `DEVICE_PROOF_INVALID` | 401 | the proof is malformed, reused, or not the device's |
+| `DEVICE_PROOF_CLOCK_SKEW` | 401 | the proof's time is more than 60 s from the gateway's clock; `server_time` is the gateway's clock (unix seconds) |
 | `DEVICE_REVOKED` | 403 | the device was revoked; its key can never hold a session again |
 | `DEVICE_PENDING` | 403 (202 on sign-in) | the device waits for another of the account's devices to approve it |
 | `DEVICE_NOT_FOUND` | 404 | the account has no such device |

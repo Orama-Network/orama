@@ -111,6 +111,36 @@ func TestVerifyDeviceProof_refusals(t *testing.T) {
 	}
 }
 
+// A proof refused for its time says so, apart from one refused for its
+// signature or its id, because the fix is the device's clock (bug-961). The
+// time is checked before anything is spent, so the device's next proof, made
+// on the gateway's clock, is accepted; a replay of that one is still refused.
+func TestVerifyDeviceProof_aProofOutsideTheWindowIsAClockRefusal(t *testing.T) {
+	s, _, _ := realRegistry(t)
+	ctx := context.Background()
+	d := p256Device(t)
+	key, _ := ParseDeviceKey([]byte(d.jwk))
+	const tenMinutes = 10 * time.Minute
+
+	for name, offset := range map[string]time.Duration{"ahead": tenMinutes, "behind": -tenMinutes} {
+		iat := time.Now().Add(offset).Unix()
+		id := "skewed-" + name + "-proof-id"
+		skewed := &DeviceProof{IssuedAt: iat, ID: id, Signature: d.sign(DeviceProofMessage(DeviceProofRefresh, "anchat", "t", iat, id))}
+		err := s.VerifyDeviceProof(ctx, key, DeviceProofRefresh, "anchat", "t", skewed)
+		if !errors.Is(err, ErrDeviceProofClockSkew) || errors.Is(err, ErrDeviceProofInvalid) {
+			t.Errorf("a clock %s by ten minutes: %v, want only ErrDeviceProofClockSkew", name, err)
+		}
+	}
+
+	fresh := proofFor(d, DeviceProofRefresh, "anchat", "t")
+	if err := s.VerifyDeviceProof(ctx, key, DeviceProofRefresh, "anchat", "t", fresh); err != nil {
+		t.Fatalf("the proof made on the gateway's clock: %v", err)
+	}
+	if err := s.VerifyDeviceProof(ctx, key, DeviceProofRefresh, "anchat", "t", fresh); !errors.Is(err, ErrDeviceProofInvalid) || errors.Is(err, ErrDeviceProofClockSkew) {
+		t.Errorf("a replayed proof: %v, want ErrDeviceProofInvalid", err)
+	}
+}
+
 func TestDeviceOf_readsTheDeviceTheWalletSignedFor(t *testing.T) {
 	id := "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"
 	m := &siw.Message{Resources: []string{namespaceResourcePrefix + "anchat", deviceResourcePrefix + id}}

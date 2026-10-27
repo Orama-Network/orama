@@ -124,7 +124,7 @@ func liveDevices(ctx context.Context, db client.DatabaseClient, nsID interface{}
 func IsDeviceError(err error) bool {
 	for _, target := range []error{
 		ErrDeviceNotFound, ErrDeviceRevoked, ErrDevicePending, ErrDeviceBelongsToAnother,
-		ErrDeviceKeyInvalid, ErrDeviceSignatureInvalid, ErrDeviceProofRequired, ErrDeviceProofInvalid,
+		ErrDeviceKeyInvalid, ErrDeviceSignatureInvalid, ErrDeviceProofRequired, ErrDeviceProofInvalid, ErrDeviceProofClockSkew,
 	} {
 		if errors.Is(err, target) {
 			return true

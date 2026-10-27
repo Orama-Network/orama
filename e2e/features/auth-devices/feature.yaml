@@ -41,6 +41,7 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#signing-in-with-a-device: a device-bound sign-in is handed no API key; the lobby binds no device"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#signing-in-with-a-device: a revoked device is a tombstone; a small-order Ed25519 key is refused; a key belongs to one account"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#linking-a-device-from-a-device: a device proof is fresh (60s), single use, for one action on one credential; a refused refresh spends nothing"
+    - "docs/whitepaper/technical-reference/vol1/13-identity.md#device-proofs: a proof outside the window is DEVICE_PROOF_CLOCK_SKEW with the gateway's server_time and Date header; a proof on that clock is accepted and a replay of it refused"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device: revoking a device ends its tokens on every gateway within ten seconds; the other devices stay signed in"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#sign-in-policy: sessions never return a refresh token; ending one refuses its access tokens within ten seconds"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#linking-a-device-from-a-device: required refuses unbound end users (DEVICE_REQUIRED), sweeps their sign-in keys and exempts owner/admin/developer"
