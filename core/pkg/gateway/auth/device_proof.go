@@ -46,6 +46,9 @@ const (
 	DeviceProofClaim      = "claim"
 	DeviceProofRevoke     = "revoke"
 	DeviceProofEndSession = "end-session"
+	// DeviceProofLogoutAll ends every session of the account, on every
+	// device; its binding is the device id of the session asking.
+	DeviceProofLogoutAll = "logout-all"
 )
 
 // deviceProofIDPattern is what a proof id may be: enough randomness to be

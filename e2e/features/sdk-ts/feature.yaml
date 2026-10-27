@@ -7,7 +7,8 @@
 # raised rather than answered as misses, the chain read proxy, every key
 # profile minted with exactly the SDK's scopes, the workload client (from
 # its own entry, reading its token file by default) and its refusals, a
-# device-bound session refreshed on a clock ten minutes ahead and behind, a WebSocket closed when its session ends, a PubSubClient with no
+# device-bound session refreshed on a clock ten minutes ahead and behind
+# and logged out everywhere with its device's proof, a WebSocket closed when its session ends, a PubSubClient with no
 # wsURL subscribing on its HTTP client's gateway, network connect and
 # disconnect refused to an owner who is not an operator), each vitest test
 # reported as a Go subtest. Needs node and pnpm on the runner and sdk/
@@ -35,10 +36,12 @@ covers:
     - /v1/namespace/keys/
     - /v1/network/connect
     - /v1/network/disconnect
+    - /v1/auth/logout
   claims:
     - "website/src/docs/developer/sdk-reference.mdx: the SDK's methods work against a live gateway with a namespace session"
     - "website/src/docs/developer/sdk-reference.mdx: createWorkloadClient comes from @orama-network/orama/workload and reads its token file with node:fs/promises by default"
     - "website/src/docs/developer/sdk-reference.mdx#device-bound-sessions: the SDK stamps device proofs on the gateway's clock, so a device-bound session refreshes on a phone whose clock is ten minutes off"
+    - "website/src/docs/developer/sdk-reference.mdx#device-bound-sessions: logout({ all: true }) from a device-bound session signs the device's logout-all proof; the access token alone is DEVICE_PROOF_REQUIRED"
     - "website/src/docs/developer/sdk-reference.mdx: multiGet answers null for a key the cache does not hold and rejects with the SDKError when the request fails"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md: ending a session closes the sockets its tokens hold open within ten seconds"
     - "docs/whitepaper/technical-reference/vol1/36-sdks.md: a pub/sub WebSocket goes to the HttpClient base URL with http replaced by ws unless the PubSubClient was given a wsURL"

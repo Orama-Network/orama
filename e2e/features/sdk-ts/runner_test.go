@@ -39,9 +39,10 @@ const (
 	// verify, refresh and a replayed verify on the public gateway; refresh,
 	// the device link start and claim on the namespace gateway, and the
 	// device-bound session's two refreshes on a skewed clock, each refused
-	// once for its time and sent again.
+	// once for its time and sent again, and its refresh before logging out
+	// everywhere.
 	mainCredentialCalls = 4
-	nsCredentialCalls   = 8
+	nsCredentialCalls   = 9
 )
 
 // tools finds node and pnpm; without them the suite cannot run here.
@@ -148,7 +149,7 @@ func suiteEnv(t *testing.T, f *fleet.Fleet, n *ns.Namespace) []string {
 		// it would revoke the owner's GATEWAY_JWT every later test uses.
 		"E2E_LOGOUT_JWT=" + endedUser.Token(), "E2E_LOGOUT_REFRESH=" + endedUser.Session.RefreshToken,
 		// A session bound to a device, and the device's private key, for the
-		// SDK's device proofs on a skewed clock.
+		// SDK's device proofs on a skewed clock and its logout everywhere.
 		"E2E_DEVICE_REFRESH=" + deviceUser.Session.RefreshToken, "E2E_DEVICE_ID=" + deviceUser.Device.ID(),
 		"E2E_DEVICE_JWK=" + string(deviceJWK),
 	}

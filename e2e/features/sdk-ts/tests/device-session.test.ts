@@ -1,14 +1,18 @@
-// A device-bound session refreshed through the SDK on a phone whose clock is
-// ten minutes ahead, then ten minutes behind (bug-961). The gateway refuses a
-// proof outside 60 s of its clock by name and says what its clock reads; the
-// SDK stamps its proofs on the gateway's clock, so the session refreshes with
-// nothing from the application.
+// A device-bound session through the SDK. It refreshes on a phone whose clock
+// is ten minutes ahead, then ten minutes behind (bug-961): the gateway refuses
+// a proof outside 60 s of its clock by name and says what its clock reads, and
+// the SDK stamps its proofs on the gateway's clock with nothing from the
+// application. Then it logs out everywhere (bug-960): the access token alone
+// is refused, and the SDK's logout({ all: true }) signs the device's proof.
 import { createPrivateKey, sign } from "node:crypto";
 import { MemoryStorage } from "../../../../sdk/src/index";
 import type { DeviceSigner } from "../../../../sdk/src/index";
-import { namespace, need, nsClient, onFleet } from "./fleet";
+import { http, namespace, need, nsClient, nsURL, onFleet } from "./fleet";
 
 const TEN_MINUTES_MS = 10 * 60_000;
+/** Revoked tokens stop "within ten seconds on every gateway", plus a round trip. */
+const REVOCATION_BOUND_MS = 15_000;
+const POLL_MS = 500;
 
 /** The Go runner's device: its Ed25519 private JWK, signing as the platform would. */
 function runnerDevice(): DeviceSigner {
@@ -27,7 +31,7 @@ async function deviceClient(storage: MemoryStorage) {
   return client;
 }
 
-describe.skipIf(!onFleet)("sdk device proofs on a skewed clock", () => {
+describe.skipIf(!onFleet)("sdk device-bound session", () => {
   const storage = new MemoryStorage();
 
   beforeAll(async () => {
@@ -58,4 +62,26 @@ describe.skipIf(!onFleet)("sdk device proofs on a skewed clock", () => {
       expect(who.authenticated).toBe(true);
     });
   }
+
+  it("logging out everywhere takes the device's proof: the access token alone is refused, the SDK signs it", async () => {
+    const client = await deviceClient(storage);
+    const token = await client.auth.refresh();
+
+    await expect(
+      http(nsURL(), token).post("/v1/auth/logout", { all: true, namespace: namespace() })
+    ).rejects.toMatchObject({ httpStatus: 401, code: "DEVICE_PROOF_REQUIRED" });
+    expect((await client.auth.whoami()).authenticated).toBe(true);
+
+    await client.auth.logout({ all: true });
+
+    const deadline = Date.now() + REVOCATION_BOUND_MS;
+    for (;;) {
+      const refused = await http(nsURL(), token)
+        .get("/v1/auth/whoami")
+        .then(() => false, (e) => e?.httpStatus === 401);
+      if (refused) break;
+      if (Date.now() > deadline) throw new Error(`the session's token outlived logout({ all: true }) by ${REVOCATION_BOUND_MS}ms`);
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+  });
 });

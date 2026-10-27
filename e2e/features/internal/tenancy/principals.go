@@ -108,8 +108,7 @@ func logout(t testing.TB, u *gw.User) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), cleanupBudget)
 	defer cancel()
-	s := u.Session
-	resp, err := u.Client.Logout(ctx, s.AccessToken, s.RefreshToken, u.Namespace, true)
+	resp, err := u.Client.LogoutEverywhere(ctx, u.Session, u.Namespace, u.Device)
 	if err != nil && (resp == nil || resp.Status != http.StatusUnauthorized) {
 		t.Errorf("cleanup: failed to log %s out: %v", u.Wallet.Address(), err)
 	}

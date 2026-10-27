@@ -22,7 +22,7 @@ export interface DeviceSigner {
 }
 
 /** What a device proof is for. Each is a different signed statement. */
-export type DeviceProofAction = "refresh" | "approve" | "claim" | "revoke" | "end-session";
+export type DeviceProofAction = "refresh" | "approve" | "claim" | "revoke" | "end-session" | "logout-all";
 
 /** A device's signature over one action, as the gateway reads it. */
 export interface DeviceProof {

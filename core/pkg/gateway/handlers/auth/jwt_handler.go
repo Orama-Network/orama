@@ -274,6 +274,14 @@ func (h *Handlers) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "jwt required for all=true")
 			return
 		}
+		// From a session bound to a device, ending every session of the
+		// account is the device's act, as revoking a device or ending a
+		// session is: the access token alone is a bearer token anybody who
+		// copied it holds. A session bound to no device is the wallet's own.
+		if claims.Did != "" && !h.verifyCallerDeviceProof(w, r, h.servedNamespace(r), claims,
+			authsvc.DeviceProofLogoutAll, claims.Did, req.DeviceProof) {
+			return
+		}
 	}
 
 	if err := h.authService.RevokeToken(ctx, req.Namespace, req.RefreshToken, req.All, subject); err != nil {

@@ -404,3 +404,62 @@ func TestSessionPolicyHandler_setsAndReads(t *testing.T) {
 		t.Errorf("read back: %d %v", code, body)
 	}
 }
+
+// From a session bound to a device, logging out everywhere is the device's act
+// (bug-960): the access token alone is refused by name and ends nothing; a
+// proof for another action does not do; the device's logout-all proof ends
+// every session of the account, once. A session bound to no device needs none.
+func TestLogoutHandler_allFromADeviceBoundSessionNeedsTheDevicesProof(t *testing.T) {
+	f := newFlow(t)
+	w := newWallet(t)
+	f.member(w.address, authsvc.RoleRuntime)
+	phone, laptop := newTestDeviceKey(t), newTestDeviceKey(t)
+	_, first := f.signIn(w, phone)
+	_, other := f.signIn(w, laptop)
+	claims := f.claimsOf(first)
+	logoutAll := func(proofBody map[string]any) (int, map[string]any) {
+		body := map[string]any{"all": true, "namespace": flowNamespace}
+		if proofBody != nil {
+			body["device_proof"] = proofBody
+		}
+		return f.do(f.h.LogoutHandler, http.MethodPost, "/v1/auth/logout", body, claims)
+	}
+	laptopRefresh := func() (int, map[string]any) {
+		rt := other["refresh_token"].(string)
+		code, body := f.do(f.h.RefreshHandler, http.MethodPost, "/v1/auth/refresh", map[string]any{
+			"refresh_token": rt, "namespace": flowNamespace, "device_proof": proof(laptop, authsvc.DeviceProofRefresh, rt),
+		}, nil)
+		if code == http.StatusOK {
+			other["refresh_token"] = body["refresh_token"]
+		}
+		return code, body
+	}
+
+	if code, body := logoutAll(nil); code != http.StatusUnauthorized || body["code"] != ErrCodeDeviceProofRequired {
+		t.Errorf("all=true with the access token alone: %d %v", code, body)
+	}
+	if code, body := laptopRefresh(); code != http.StatusOK {
+		t.Fatalf("the refused logout ended the laptop's session: %d %v", code, body)
+	}
+	if code, body := logoutAll(proof(phone, authsvc.DeviceProofEndSession, phone.id)); code != http.StatusUnauthorized || body["code"] != ErrCodeDeviceProofInvalid {
+		t.Errorf("all=true with an end-session proof: %d %v", code, body)
+	}
+	good := proof(phone, authsvc.DeviceProofLogoutAll, phone.id)
+	if code, body := logoutAll(good); code != http.StatusOK {
+		t.Fatalf("all=true with the device's logout-all proof: %d %v", code, body)
+	}
+	if code, body := logoutAll(good); code != http.StatusUnauthorized || body["code"] != ErrCodeDeviceProofInvalid {
+		t.Errorf("the logout-all proof replayed: %d %v", code, body)
+	}
+	if code, body := laptopRefresh(); code == http.StatusOK {
+		t.Errorf("the laptop's session outlived logging out everywhere: %d %v", code, body)
+	}
+
+	plain := newWallet(t)
+	f.member(plain.address, authsvc.RoleRuntime)
+	_, unbound := f.signIn(plain, nil)
+	if code, body := f.do(f.h.LogoutHandler, http.MethodPost, "/v1/auth/logout",
+		map[string]any{"all": true, "namespace": flowNamespace}, f.claimsOf(unbound)); code != http.StatusOK {
+		t.Errorf("all=true from a session bound to no device: %d %v", code, body)
+	}
+}

@@ -97,11 +97,18 @@ func (h *Handlers) requireCallerDeviceProof(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid json body: expected {\"device_proof\": {...}}")
 		return false
 	}
+	return h.verifyCallerDeviceProof(w, r, namespace, claims, action, target, req.DeviceProof)
+}
+
+// verifyCallerDeviceProof checks that the device the caller's token is bound
+// to is still active and signed proof for this action on this target, and
+// spends the proof. It writes the refusal itself.
+func (h *Handlers) verifyCallerDeviceProof(w http.ResponseWriter, r *http.Request, namespace string, claims *authsvc.JWTClaims, action, target string, proof *authsvc.DeviceProof) bool {
 	device, err := h.authService.RequireActiveDevice(r.Context(), namespace, claims.Sub, claims.Did)
 	if err == nil {
 		var key *authsvc.DeviceKey
 		if key, err = device.Key(); err == nil {
-			err = h.authService.VerifyDeviceProof(r.Context(), key, action, namespace, target, req.DeviceProof)
+			err = h.authService.VerifyDeviceProof(r.Context(), key, action, namespace, target, proof)
 		}
 	}
 	if err != nil {

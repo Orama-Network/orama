@@ -41,6 +41,14 @@ export interface LogoutOptions {
    * Default: true. Set it to false to reset local state only.
    */
   server?: boolean;
+  /**
+   * End every session of the account, on every device, not only this one.
+   * From a session bound to a device the device signs for it (the device
+   * signer must be set), as it does to revoke a device: an access token
+   * lifted off one phone must not sign the account out of all the others.
+   * A session bound to no device always ends them all. Default: false.
+   */
+  all?: boolean;
 }
 
 export class AuthClient {
@@ -251,16 +259,15 @@ export class AuthClient {
    * valid on the gateway until they expire.
    */
   async logout(options: LogoutOptions = {}): Promise<void> {
-    const { keepApiKey = false, server = true } = options;
+    const { keepApiKey = false, server = true, all = false } = options;
 
     // Only a JWT has a server-side session; an API key has nothing to end.
     let serverError: SDKError | undefined;
     if (server && this.currentJwt) {
-      const body = await this.logoutBody();
       try {
-        await this.httpClient.post("/v1/auth/logout", body);
+        await this.endSessionOnGateway(all);
       } catch (error) {
-        // HttpClient raises nothing but SDKError.
+        // HttpClient and the device proof raise nothing but SDKError.
         serverError = error as SDKError;
       }
     }
@@ -434,18 +441,32 @@ export class AuthClient {
   }
 
   /**
-   * What logging out ends. A session bound to a device ends that device's
-   * session and nothing else — logging out on one phone must not sign the
-   * account out of the others. A session bound to none ends all of them, as
-   * it always has.
+   * Tell the gateway what logging out ends. A session bound to a device ends
+   * that device's session and nothing else — logging out on one phone must not
+   * sign the account out of the others — unless `all` is asked for, which the
+   * device signs (`logout-all`, over its own id). A session bound to none ends
+   * all of them, as it always has.
    */
-  private async logoutBody(): Promise<Record<string, unknown>> {
+  private async endSessionOnGateway(all: boolean): Promise<void> {
+    const deviceId = await this.storage.get(DEVICE_ID_KEY);
     const refreshToken = await this.storage.get("refreshToken");
-    if ((await this.storage.get(DEVICE_ID_KEY)) && refreshToken) {
-      const namespace = (await this.storage.get("namespace")) ?? "default";
-      return { refresh_token: refreshToken, namespace };
+    const namespace = (await this.storage.get("namespace")) ?? "default";
+    if (!deviceId) {
+      await this.httpClient.post("/v1/auth/logout", { all: true });
+      return;
     }
-    return { all: true };
+    if (!all && refreshToken) {
+      await this.httpClient.post("/v1/auth/logout", { refresh_token: refreshToken, namespace });
+      return;
+    }
+    await this.sendWithProof("logout-all", namespace, deviceId, (device_proof) =>
+      this.httpClient.post("/v1/auth/logout", {
+        all: true,
+        namespace,
+        ...(refreshToken ? { refresh_token: refreshToken } : {}),
+        device_proof,
+      })
+    );
   }
 
   /** The calling account's devices, revoked ones included. */

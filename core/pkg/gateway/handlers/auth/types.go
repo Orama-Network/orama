@@ -64,4 +64,8 @@ type LogoutRequest struct {
 	RefreshToken string `json:"refresh_token"`
 	Namespace    string `json:"namespace"`
 	All          bool   `json:"all"`
+	// DeviceProof is, with All from a session bound to a device, that
+	// device's proof for logout-all over its own id: an access token lifted
+	// off one phone must not sign the account out of every other.
+	DeviceProof *authsvc.DeviceProof `json:"device_proof,omitempty"`
 }
