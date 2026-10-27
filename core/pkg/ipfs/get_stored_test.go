@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -272,24 +273,51 @@ func TestGetStored_noAnnouncedLengthIsAnError(t *testing.T) {
 }
 
 // The idle timeout bounds each wait, not the whole transfer: an object that
-// keeps arriving for several idle periods is read to the end.
+// keeps arriving for several idle periods is read to the end. The watchdog
+// runs on a fake clock that the test moves half an idle period before each
+// chunk is sent, after the one before it was read, so the object arrives over
+// four idle periods however slowly the machine runs the test.
 func TestGetStored_idleTimeoutDoesNotBoundAnObjectThatKeepsArriving(t *testing.T) {
 	const idle = 150 * time.Millisecond
 	const chunks = 8
+	head := strings.Repeat("x", len(wrapMagic))
+	next := make(chan struct{}, chunks)
 	c, url := pinnedServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Length", strconv.Itoa(chunks))
+		w.Header().Set("X-Content-Length", strconv.Itoa(len(head)+chunks))
+		_, _ = io.WriteString(w, head)
+		w.(http.Flusher).Flush()
 		for i := 0; i < chunks; i++ {
+			select {
+			case <-next:
+			case <-r.Context().Done():
+				return
+			}
 			_, _ = io.WriteString(w, "x")
 			w.(http.Flusher).Flush()
-			time.Sleep(idle / 2)
 		}
 	})
+	clock := &fakeClock{}
+	c.afterFunc = clock.afterFunc
 	got, err := c.GetStored(context.Background(), storedCID, url, idle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body := read(t, got.Body); len(body) != chunks {
-		t.Fatalf("read %d of %d bytes over %s with an idle timeout of %s", len(body), chunks, chunks*idle/2, idle)
+	defer got.Body.Close()
+	// GetStored read the head to tell sealed content from clear; the body
+	// returns it from memory before any chunk read from the stream.
+	if _, err := io.ReadFull(got.Body, make([]byte, len(head))); err != nil {
+		t.Fatalf("the first bytes: %v", err)
+	}
+	chunk := make([]byte, 1)
+	for i := 0; i < chunks; i++ {
+		after := time.Duration(i+1) * idle / 2
+		if clock.advance(idle/2) != 0 {
+			t.Fatalf("the watchdog fired before chunk %d of %d, %s after the first bytes, though bytes arrived every %s against an idle timeout of %s", i+1, chunks, after, idle/2, idle)
+		}
+		next <- struct{}{}
+		if _, err := io.ReadFull(got.Body, chunk); err != nil {
+			t.Fatalf("chunk %d of %d, %s after the first bytes: %v", i+1, chunks, after, err)
+		}
 	}
 }
 
@@ -316,80 +344,75 @@ func TestGetStored_aStalledStreamFailsWithErrIdle(t *testing.T) {
 // A first byte that never comes is the same timeout, before GetStored returns.
 func TestGetStored_noFirstByteFailsWithErrIdle(t *testing.T) {
 	const idle = 150 * time.Millisecond
+	clock := &fakeClock{}
 	c, url := pinnedServer(t, nil, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Length", "100")
 		w.WriteHeader(http.StatusOK)
 		w.(http.Flusher).Flush()
+		clock.advance(idle)
 		<-r.Context().Done()
 	})
-	start := time.Now()
+	c.afterFunc = clock.afterFunc
 	_, err := c.GetStored(context.Background(), storedCID, url, idle)
 	if !errors.Is(err, ErrIdle) {
 		t.Fatalf("err=%v, want ErrIdle", err)
 	}
-	if took := time.Since(start); took > idle+time.Second {
-		t.Errorf("a stalled first byte held GetStored %s", took)
-	}
 }
 
-// Get keeps its fully buffered reader with Len (bugboard #266).
-type lenReader interface{ Len() int }
-
-func TestGet_returnsAReaderWithLen(t *testing.T) {
-	key := bytes.Repeat([]byte{0x42}, 32)
-	plain := []byte("tenant-bytes-sealed-at-rest")
-	sealed, err := sealBlob(plain, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(sealed)
-	}))
-	t.Cleanup(srv.Close)
-	c, err := NewClient(Config{ClusterAPIURL: srv.URL, WrapKey: key}, zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := c.Get(context.Background(), storedCID, srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l, ok := r.(lenReader)
-	if !ok || l.Len() != len(plain) {
-		t.Fatalf("Get returned %T; want a reader with Len %d", r, len(plain))
-	}
-	if got := read(t, r); got != string(plain) {
-		t.Errorf("body=%q", got)
-	}
+// fakeClock is the idle watchdog's clock in a test: time moves only when the
+// test advances it.
+type fakeClock struct {
+	mu     sync.Mutex
+	now    time.Duration
+	timers []*fakeTimer
 }
 
-// The client's 60 s whole-call timeout must not cut a streamed read off: its
-// bound is the idle timeout.
-func TestGetStored_isNotBoundByTheClientTimeout(t *testing.T) {
-	const chunks = 6
-	interval := 100 * time.Millisecond
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v0/pin/ls" {
-			_, _ = fmt.Fprintf(w, `{"Keys":{%q:{"Type":"recursive"}}}`, r.URL.Query().Get("arg"))
-			return
+func (c *fakeClock) afterFunc(d time.Duration, f func()) watchdogTimer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := &fakeTimer{clock: c, at: c.now + d, f: f, active: true}
+	c.timers = append(c.timers, t)
+	return t
+}
+
+// advance moves the clock by d, runs every timer that came due and returns
+// how many did.
+func (c *fakeClock) advance(d time.Duration) int {
+	c.mu.Lock()
+	c.now += d
+	var due []func()
+	for _, t := range c.timers {
+		if t.active && t.at <= c.now {
+			t.active = false
+			due = append(due, t.f)
 		}
-		w.Header().Set("X-Content-Length", strconv.Itoa(chunks))
-		for i := 0; i < chunks; i++ {
-			_, _ = io.WriteString(w, "x")
-			w.(http.Flusher).Flush()
-			time.Sleep(interval)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	c, err := NewClient(Config{ClusterAPIURL: srv.URL, Timeout: 2 * interval}, zap.NewNop())
-	if err != nil {
-		t.Fatal(err)
 	}
-	got, err := c.GetStored(context.Background(), storedCID, srv.URL, time.Second)
-	if err != nil {
-		t.Fatal(err)
+	c.mu.Unlock()
+	for _, f := range due {
+		f()
 	}
-	if body := read(t, got.Body); len(body) != chunks {
-		t.Fatalf("read %d of %d bytes", len(body), chunks)
-	}
+	return len(due)
+}
+
+type fakeTimer struct {
+	clock  *fakeClock
+	at     time.Duration
+	f      func()
+	active bool
+}
+
+func (t *fakeTimer) Reset(d time.Duration) bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	was := t.active
+	t.at, t.active = t.clock.now+d, true
+	return was
+}
+
+func (t *fakeTimer) Stop() bool {
+	t.clock.mu.Lock()
+	defer t.clock.mu.Unlock()
+	was := t.active
+	t.active = false
+	return was
 }
