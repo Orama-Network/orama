@@ -392,6 +392,7 @@ volumes:
               - chain/ci.mk
               - chain/deny.toml
               - chain/.semgrep/
+              - chain/testdata/repo/
 
       - title: Client Surfaces
         chapters:
