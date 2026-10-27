@@ -20,11 +20,17 @@
 # admissions are refused with typed errors, joins and leaves are published on
 # _orama/webrtc/<room>, a kick closes the connection and blocks the rejoin, a
 # mute stops the user's audio on the server through a rejoin, and audio-state
-# and video-state are relayed to the room.
+# and video-state are relayed to the room. feat-964: a video mute stops the
+# user's video on the server apart from their audio, announced as a forced
+# video participant-state, through a rejoin, until unmuted; a device admitted
+# by its session's device id (get_caller_device_id) joins while another device
+# of the account is refused, webrtc_admission reports each device's verdict,
+# and webrtc_kick_device removes and refuses that device alone, even against
+# an older admission of every device.
 id: webrtc
 title: WebRTC (SFU and TURN)
 area: webrtc
-subtasks: [2838, 726, 4074]
+subtasks: [2838, 726, 4074, 4158]
 stage: 6
 destructive: false
 requires:
@@ -63,4 +69,6 @@ covers:
     - "website/src/docs/developer/webrtc.mdx#membership-events: every join and leave is published on _orama/webrtc/<room> with the authenticated user, device and peer, and a leave says why"
     - "website/src/docs/developer/webrtc.mdx#kick-and-mute: webrtc_kick closes the user's connection and the revoked admission refuses the rejoin; webrtc_mute stops forwarding the user's audio on the SFU, through a rejoin, until unmuted"
     - "website/src/docs/developer/webrtc.mdx#audio-and-video-state: audio-state and video-state are relayed to the room as participant-state; a frame without enabled is invalid_state, not unknown_message"
-    - "website/src/docs/developer/functions.mdx#host-functions-api: webrtc_admit, webrtc_kick and webrtc_mute act on the calling function's namespace"
+    - "website/src/docs/developer/webrtc.mdx#kick-and-mute: webrtc_mute_video stops forwarding the user's video on the SFU and not their audio, is announced as a forced participant-state of kind video, holds through a rejoin, until unmuted"
+    - "website/src/docs/developer/webrtc.mdx#admitting-one-device: a device admitted by its session's device id joins and another device of the same account is refused; webrtc_admission reports admitted, revoked and never-admitted devices; webrtc_kick_device closes that device alone (leave reason kicked with its device_id), refuses its rejoin as revoked, leaves the other device in the room, and outranks an older admission of every device"
+    - "website/src/docs/developer/functions.mdx#host-functions-api: webrtc_admit, webrtc_kick, webrtc_kick_device, webrtc_mute, webrtc_mute_video and webrtc_admission act on the calling function's namespace"

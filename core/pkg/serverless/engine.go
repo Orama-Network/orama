@@ -977,7 +977,10 @@ func (e *Engine) registerHostModule(ctx context.Context) error {
 			NewFunctionBuilder().WithFunc(e.hTurnCredentials).Export("turn_credentials").
 			NewFunctionBuilder().WithFunc(e.hWebRTCAdmit).Export("webrtc_admit").
 			NewFunctionBuilder().WithFunc(e.hWebRTCKick).Export("webrtc_kick").
+			NewFunctionBuilder().WithFunc(e.hWebRTCKickDevice).Export("webrtc_kick_device").
 			NewFunctionBuilder().WithFunc(e.hWebRTCMute).Export("webrtc_mute").
+			NewFunctionBuilder().WithFunc(e.hWebRTCMuteVideo).Export("webrtc_mute_video").
+			NewFunctionBuilder().WithFunc(e.hWebRTCAdmission).Export("webrtc_admission").
 			NewFunctionBuilder().WithFunc(e.hWSPubSubBridge).Export("ws_pubsub_bridge").
 			NewFunctionBuilder().WithFunc(e.hWSPubSubUnbridge).Export("ws_pubsub_unbridge").
 			NewFunctionBuilder().WithFunc(e.hWSSend).Export("ws_send").

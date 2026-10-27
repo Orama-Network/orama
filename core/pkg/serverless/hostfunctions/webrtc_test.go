@@ -12,9 +12,10 @@ import (
 )
 
 type recordingWebRTC struct {
-	calls   []string
-	expires time.Time
-	err     error
+	calls     []string
+	expires   time.Time
+	admission serverless.WebRTCAdmission
+	err       error
 }
 
 func (r *recordingWebRTC) Admit(_ context.Context, ns, room, user, device string, ttl time.Duration) (time.Time, error) {
@@ -27,13 +28,31 @@ func (r *recordingWebRTC) Kick(_ context.Context, ns, room, user string) error {
 	return r.err
 }
 
-func (r *recordingWebRTC) Mute(_ context.Context, ns, room, user string, muted bool) error {
-	m := "unmute"
-	if muted {
-		m = "mute"
-	}
-	r.calls = append(r.calls, strings.Join([]string{m, ns, room, user}, "|"))
+func (r *recordingWebRTC) KickDevice(_ context.Context, ns, room, user, device string) error {
+	r.calls = append(r.calls, strings.Join([]string{"kick-device", ns, room, user, device}, "|"))
 	return r.err
+}
+
+func (r *recordingWebRTC) Mute(_ context.Context, ns, room, user string, muted bool) error {
+	r.calls = append(r.calls, strings.Join([]string{muteVerb("", muted), ns, room, user}, "|"))
+	return r.err
+}
+
+func (r *recordingWebRTC) MuteVideo(_ context.Context, ns, room, user string, muted bool) error {
+	r.calls = append(r.calls, strings.Join([]string{muteVerb("video-", muted), ns, room, user}, "|"))
+	return r.err
+}
+
+func (r *recordingWebRTC) AdmissionOf(_ context.Context, ns, room, user, device string) (serverless.WebRTCAdmission, error) {
+	r.calls = append(r.calls, strings.Join([]string{"admission", ns, room, user, device}, "|"))
+	return r.admission, r.err
+}
+
+func muteVerb(prefix string, muted bool) string {
+	if muted {
+		return prefix + "mute"
+	}
+	return prefix + "unmute"
 }
 
 func webrtcHost(c serverless.WebRTCController) (*HostFunctions, context.Context) {
@@ -82,16 +101,65 @@ func TestWebRTCKickAndMute_passThroughToTheController(t *testing.T) {
 	}
 }
 
+// feat-964: a device kick names the device, a video mute is not an audio mute.
+func TestWebRTCKickDeviceAndMuteVideo_passThroughToTheController(t *testing.T) {
+	c := &recordingWebRTC{}
+	h, ctx := webrtcHost(c)
+
+	if err := h.WebRTCKickDevice(ctx, "r", "u", "did-phone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.WebRTCMuteVideo(ctx, "r", "u", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.WebRTCMuteVideo(ctx, "r", "u", false); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"kick-device|anchat|r|u|did-phone", "video-mute|anchat|r|u", "video-unmute|anchat|r|u"}
+	if strings.Join(c.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want %v", c.calls, want)
+	}
+}
+
+func TestWebRTCAdmission_reportsTheControllersVerdictForTheNamedDevice(t *testing.T) {
+	c := &recordingWebRTC{admission: serverless.WebRTCAdmission{Admitted: true, VideoMuted: true, ExpiresAt: 1_800_003_600}}
+	h, ctx := webrtcHost(c)
+
+	out, err := h.WebRTCAdmission(ctx, "r", "u", "did-phone")
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 1 || c.calls[0] != "admission|anchat|r|u|did-phone" {
+		t.Fatalf("calls = %v", c.calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"room": "r", "user_id": "u", "device_id": "did-phone", "admitted": true, "revoked": false,
+		"expired": false, "muted": false, "video_muted": true, "expires_at": float64(1_800_003_600)}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+}
+
 func TestWebRTCHostCalls_controllerErrorsAreHostFunctionErrors(t *testing.T) {
 	boom := errors.New("sfu unreachable")
 	c := &recordingWebRTC{err: boom}
 	h, ctx := webrtcHost(c)
 
 	_, errAdmit := h.WebRTCAdmit(ctx, "r", "u", "", time.Minute)
+	_, errAdmission := h.WebRTCAdmission(ctx, "r", "u", "")
 	for name, err := range map[string]error{
-		"admit": errAdmit,
-		"kick":  h.WebRTCKick(ctx, "r", "u"),
-		"mute":  h.WebRTCMute(ctx, "r", "u", true),
+		"admit":       errAdmit,
+		"kick":        h.WebRTCKick(ctx, "r", "u"),
+		"kick_device": h.WebRTCKickDevice(ctx, "r", "u", "d"),
+		"mute":        h.WebRTCMute(ctx, "r", "u", true),
+		"mute_video":  h.WebRTCMuteVideo(ctx, "r", "u", true),
+		"admission":   errAdmission,
 	} {
 		var hfe *serverless.HostFunctionError
 		if !errors.As(err, &hfe) || !errors.Is(err, boom) || hfe.Function != "webrtc_"+name {
@@ -138,10 +206,14 @@ func TestWebRTCHostCalls_budgetIsPerInvocation(t *testing.T) {
 		}
 	}
 	_, errAdmit := h.WebRTCAdmit(ctx, "r", "u", "", time.Minute)
+	_, errAdmission := h.WebRTCAdmission(ctx, "r", "u", "")
 	for name, err := range map[string]error{
-		"admit": errAdmit,
-		"kick":  h.WebRTCKick(ctx, "r", "u"),
-		"mute":  h.WebRTCMute(ctx, "r", "u", true),
+		"admit":       errAdmit,
+		"kick":        h.WebRTCKick(ctx, "r", "u"),
+		"kick_device": h.WebRTCKickDevice(ctx, "r", "u", "d"),
+		"mute":        h.WebRTCMute(ctx, "r", "u", true),
+		"mute_video":  h.WebRTCMuteVideo(ctx, "r", "u", true),
+		"admission":   errAdmission,
 	} {
 		var hfe *serverless.HostFunctionError
 		if !errors.As(err, &hfe) || !errors.Is(err, ErrWebRTCBudgetExceeded) || hfe.Function != "webrtc_"+name {

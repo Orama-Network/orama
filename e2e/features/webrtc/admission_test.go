@@ -451,6 +451,14 @@ func TestAdmission_lifecycle(t *testing.T) {
 			return sub.Received() > before, nil
 		})
 	})
+
+	t.Run("a video mute stops the user's video on the server, not their audio, through a rejoin, until unmuted", func(t *testing.T) {
+		videoMuteHolds(t, fx, caller, alice, bob)
+	})
+
+	t.Run("a device admitted by its session's device id joins, another device of the account does not, and a device kick removes that device alone", func(t *testing.T) {
+		deviceAdmission(t, fx, caller, admin.token)
+	})
 }
 
 // expectSilence publishes from pub for silenceWindow and fails if sub receives

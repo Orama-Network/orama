@@ -1114,6 +1114,7 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `muted` | INTEGER | yes | `0` |  |
 | `created_at` | INTEGER | yes | - |  |
 | `generation` | INTEGER | yes | `0` |  |
+| `video_muted` | INTEGER | yes | `0` |  |
 
 ## webrtc_port_allocations
 

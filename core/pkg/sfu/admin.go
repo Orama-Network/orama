@@ -62,7 +62,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `kick needs {"room","user_id","at_ms"}`, http.StatusBadRequest)
 		return
 	}
-	s.kicks.record(req.Room, req.UserID, req.AtMs, req.AdmitGen)
+	s.kicks.record(req.Room, req.UserID, "", req.AtMs, req.AdmitGen)
 	affected := 0
 	if room := s.roomManager.GetRoom(req.Room); room != nil {
 		affected = room.KickUser(req.UserID)
@@ -71,31 +71,62 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	writeControlResult(w, affected)
 }
 
-// handleMute serves POST /admin/mute: stop or resume forwarding a user's audio.
-// The state is logged, because the user may be joining the room right now.
-func (s *Server) handleMute(w http.ResponseWriter, r *http.Request) {
-	body := s.authenticControl(w, r, ctrlauth.MutePath)
+// handleKickDevice serves POST /admin/kick-device: remove one device of a user
+// from a room and refuse that device's joins ticketed before now. The user's
+// other devices stay. It is logged whether or not the room is hosted here, as a
+// kick of the user is.
+func (s *Server) handleKickDevice(w http.ResponseWriter, r *http.Request) {
+	body := s.authenticControl(w, r, ctrlauth.KickDevicePath)
 	if body == nil {
 		return
 	}
-	var req ctrlauth.MuteRequest
-	if err := json.Unmarshal(body, &req); err != nil || req.Room == "" || req.UserID == "" || req.AtMs == 0 {
-		http.Error(w, `mute needs {"room","user_id","muted","at_ms"}`, http.StatusBadRequest)
+	var req ctrlauth.KickRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.Room == "" || req.UserID == "" || req.DeviceID == "" || req.AtMs == 0 {
+		http.Error(w, `kick-device needs {"room","user_id","device_id","at_ms"}`, http.StatusBadRequest)
 		return
 	}
+	s.kicks.record(req.Room, req.UserID, req.DeviceID, req.AtMs, req.AdmitGen)
 	affected := 0
-	// Logged before the room is looked at: a join that finds the log without the
-	// mute has its peer in the room before the mute looks for it.
-	if !s.mutes.record(req.Room, req.UserID, req.Muted, req.AtMs) {
-		s.logger.Info("Mute ignored: older than the one on record", zap.String("room", req.Room),
-			zap.String("user_id", req.UserID), zap.Bool("muted", req.Muted))
-		writeControlResult(w, affected)
-		return
-	}
 	if room := s.roomManager.GetRoom(req.Room); room != nil {
-		affected = room.MuteUser(req.UserID, req.Muted)
+		affected = room.KickDevice(req.UserID, req.DeviceID)
 	}
-	s.logger.Info("User mute changed", zap.String("room", req.Room), zap.String("user_id", req.UserID),
-		zap.Bool("muted", req.Muted), zap.Int("peers", affected))
+	s.logger.Info("Device kicked from room", zap.String("room", req.Room), zap.String("user_id", req.UserID),
+		zap.String("device_id", req.DeviceID), zap.Int("peers", affected))
 	writeControlResult(w, affected)
+}
+
+// handleMute serves the mute route of m (POST /admin/mute for audio,
+// /admin/mute-video for video): stop or resume forwarding that media of a user.
+// The state is logged, because the user may be joining the room right now.
+func (s *Server) handleMute(m media) http.HandlerFunc {
+	path, mutes := ctrlauth.MutePath, s.muteLogOf(m)
+	if m == mediaVideo {
+		path = ctrlauth.VideoMutePath
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		body := s.authenticControl(w, r, path)
+		if body == nil {
+			return
+		}
+		var req ctrlauth.MuteRequest
+		if err := json.Unmarshal(body, &req); err != nil || req.Room == "" || req.UserID == "" || req.AtMs == 0 {
+			http.Error(w, `mute needs {"room","user_id","muted","at_ms"}`, http.StatusBadRequest)
+			return
+		}
+		affected := 0
+		// Logged before the room is looked at: a join that finds the log without
+		// the mute has its peer in the room before the mute looks for it.
+		if !mutes.record(req.Room, req.UserID, req.Muted, req.AtMs) {
+			s.logger.Info("Mute ignored: older than the one on record", zap.String("media", m.String()),
+				zap.String("room", req.Room), zap.String("user_id", req.UserID), zap.Bool("muted", req.Muted))
+			writeControlResult(w, affected)
+			return
+		}
+		if room := s.roomManager.GetRoom(req.Room); room != nil {
+			affected = room.MuteUser(req.UserID, m, req.Muted)
+		}
+		s.logger.Info("User mute changed", zap.String("media", m.String()), zap.String("room", req.Room),
+			zap.String("user_id", req.UserID), zap.Bool("muted", req.Muted), zap.Int("peers", affected))
+		writeControlResult(w, affected)
+	}
 }

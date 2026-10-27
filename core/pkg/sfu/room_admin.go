@@ -64,26 +64,44 @@ func (r *Room) ExpirePeer(peer *Peer) {
 	r.RemovePeer(peer.ID)
 }
 
-// MuteUser stops (or resumes) the forwarding of every audio track of userID
-// and tells the room. It returns how many peers of the user the room has.
-func (r *Room) MuteUser(userID string, muted bool) int {
+// KickDevice removes the peers of userID connected from deviceID, and no other
+// device's. It returns how many were removed.
+func (r *Room) KickDevice(userID, deviceID string) int {
+	n := 0
+	for _, p := range r.peersOfUser(userID) {
+		if p.DeviceID == deviceID {
+			r.KickPeer(p)
+			n++
+		}
+	}
+	return n
+}
+
+// MuteUser stops (or resumes) the forwarding of every track of kind m of
+// userID and tells the room. It returns how many peers of the user the room has.
+func (r *Room) MuteUser(userID string, m media, muted bool) int {
 	peers := r.peersOfUser(userID)
 	for _, p := range peers {
-		r.setPeerMuted(p, muted)
+		r.setPeerMuted(p, m, muted)
 	}
 	return len(peers)
 }
 
-// setPeerMuted sets one peer's mute and tells the room, as one step per peer:
-// two of them interleaving (a join settling its mute while the user is
-// unmuted) would otherwise leave the room told the older state.
-func (r *Room) setPeerMuted(p *Peer, muted bool) {
+// setPeerMuted sets one peer's mute of m and tells the room, as one step per
+// peer: two of them interleaving (a join settling its mute while the user is
+// unmuted) would otherwise leave the room told the older state. Video resumed
+// mid-stream cannot be decoded until the next keyframe, so an unmute of video
+// asks the publisher for one.
+func (r *Room) setPeerMuted(p *Peer, m media, muted bool) {
 	p.muteMu.Lock()
 	defer p.muteMu.Unlock()
-	p.muted.Store(muted)
+	p.mutedFlag(m).Store(muted)
 	r.broadcastMessage("", NewServerMessage(MessageTypeParticipantState, &ParticipantStateData{
-		PeerID: p.ID, UserID: p.UserID, Kind: "audio", Enabled: !muted, Forced: true,
+		PeerID: p.ID, UserID: p.UserID, Kind: m.String(), Enabled: !muted, Forced: true,
 	}))
+	if m == mediaVideo && !muted {
+		r.RequestKeyframe(mediaVideo.String() + "-" + p.ID)
+	}
 }
 
 // relayState tells the others in the room that peer turned its audio or video

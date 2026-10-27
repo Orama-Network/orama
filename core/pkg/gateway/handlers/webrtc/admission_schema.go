@@ -8,15 +8,21 @@ import (
 	"strings"
 )
 
-// Migrations 073 and 075 create its tables IF NOT EXISTS. A namespace whose own
-// database already had a table of the same name (a tenant's, from before the
-// platform used the name) keeps it, and every query against it would then fail
+// Migration 073 creates its tables IF NOT EXISTS, and 075 and 094 add columns.
+// A namespace whose own database already had a table of the same name (a
+// tenant's, from before the platform used the name) keeps it, and every query
+// against it would then fail
 // with an error that does not say why, or worse, read the tenant's rows as
 // admissions. The store checks the tables once, before first use, and refuses
 // with an error that names the table and what is wrong with it.
 
-// generationColumn is the column migration 075 adds to webrtc_admissions.
-const generationColumn = "generation"
+// addedColumns are the columns later migrations add to the tables 073 made, by
+// the migration that adds each. A platform table missing only some of these has
+// not been migrated yet; one missing anything else is not the platform's.
+var addedColumns = map[string]string{
+	"generation":  "075",
+	"video_muted": "094",
+}
 
 // errAdmissionSchema marks a refusal because a table is not the one migration 073
 // makes. The tables are checked again on the next join, so a namespace that
@@ -40,7 +46,7 @@ var admissionTables = []tableShape{
 	},
 	{
 		name:    "webrtc_admissions",
-		columns: []string{"namespace", "room", "user_id", "device_id", "expires_at", "revoked_at", "muted", "created_at", generationColumn},
+		columns: []string{"namespace", "room", "user_id", "device_id", "expires_at", "revoked_at", "muted", "created_at", "generation", "video_muted"},
 		key:     []string{"namespace", "room", "user_id", "device_id"},
 	},
 }
@@ -66,7 +72,7 @@ func (s *AdmissionStore) ensureSchema(ctx context.Context) error {
 		if len(cols) == 0 {
 			// Not a mismatch: the migration may simply not have reached this
 			// database yet, and a retry can find it.
-			return fmt.Errorf("table %s does not exist: are migrations 073 and 075 applied to this namespace's database?", want.name)
+			return fmt.Errorf("table %s does not exist: are migrations 073, 075 and 094 applied to this namespace's database?", want.name)
 		}
 		if err := want.check(cols); err != nil {
 			return fmt.Errorf("%w: %v", errAdmissionSchema, err)
@@ -85,34 +91,43 @@ func (t tableShape) check(have []columnInfo) error {
 			key[c.Name] = true
 		}
 	}
-	var missing []string
+	var missing, unmigrated []string
 	for _, c := range t.columns {
 		if !present[c] {
 			missing = append(missing, c)
+			if m, ok := addedColumns[c]; ok {
+				unmigrated = append(unmigrated, m)
+			}
 		}
 	}
-	onlyGeneration := len(missing) == 1 && missing[0] == generationColumn
-	if len(missing) > 0 && !onlyGeneration {
+	onlyAdded := len(missing) > 0 && len(unmigrated) == len(missing)
+	if len(missing) > 0 && !onlyAdded {
 		sort.Strings(missing)
 		return fmt.Errorf("table %s in this namespace's database is not the WebRTC admission table: it lacks columns %s; "+
-			"it predates migration 073 (and 075, which do not replace an existing table), so rename or drop it and re-apply the migrations",
+			"it predates migration 073 (and 075 and 094, which do not replace an existing table), so rename or drop it and re-apply the migrations",
 			t.name, strings.Join(missing, ", "))
 	}
 	if len(key) != len(t.key) {
-		return fmt.Errorf("table %s has primary key columns %s, want exactly %s; rename or drop it and re-apply migration 073 and 075",
+		return fmt.Errorf("table %s has primary key columns %s, want exactly %s; rename or drop it and re-apply migration 073 and those after it",
 			t.name, keyNames(key), strings.Join(t.key, ", "))
 	}
 	for _, k := range t.key {
 		if !key[k] {
-			return fmt.Errorf("table %s has primary key columns %s, want exactly %s; rename or drop it and re-apply migration 073 and 075",
+			return fmt.Errorf("table %s has primary key columns %s, want exactly %s; rename or drop it and re-apply migration 073 and those after it",
 				t.name, keyNames(key), strings.Join(t.key, ", "))
 		}
 	}
-	if onlyGeneration {
-		// The platform's own table, made by 073, before 075 added the column:
-		// the namespace gateway applies 075 when it starts.
-		return fmt.Errorf("table %s has no %s column: migration 075 has not been applied to this namespace's database yet; "+
-			"its gateway applies it when it starts", t.name, generationColumn)
+	if onlyAdded {
+		// The platform's own table, made by 073, before a later migration added
+		// its column: the namespace gateway applies the migrations when it starts.
+		sort.Strings(missing)
+		sort.Strings(unmigrated)
+		pending := "migration " + unmigrated[0] + " has"
+		if len(unmigrated) > 1 {
+			pending = "migrations " + strings.Join(unmigrated, " and ") + " have"
+		}
+		return fmt.Errorf("table %s lacks %s: %s not been applied to this namespace's database yet; "+
+			"its gateway applies them when it starts", t.name, strings.Join(missing, ", "), pending)
 	}
 	return nil
 }

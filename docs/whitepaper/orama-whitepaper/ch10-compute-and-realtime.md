@@ -64,7 +64,7 @@ WebRTC is opt-in per namespace. Enabling it generates a 32-byte TURN secret, all
 
 A room lives in exactly one SFU, which every gateway must find without coordination. The gateway ranks the namespace's SFU nodes by SHA-256 of namespace, room and node id (rendezvous hashing), probes each `GET /health?room=` with a 1.5 s timeout, and picks the first healthy node already hosting the room, else the top-ranked healthy one. Nothing is written, so no lease can go stale. With no healthy SFU the join fails, because a local fallback would split the call.
 
-The gateway authenticates the user, checks admission in the namespace database when the namespace requires it, and signs a 30 s ticket (HMAC under a key derived from the TURN secret) naming user, device, room, mute flag and admission end. The user is the account the namespace's claims provider signed into the token (`account_id`), else the token subject, so peers never see a wallet the namespace named an account for. It proxies the socket to the SFU's WireGuard address. The SFU takes identity only from the ticket, and kicks the peer when its admission ends.
+The gateway authenticates the user, checks admission in the namespace database when the namespace requires it, and signs a 30 s ticket (HMAC under a key derived from the TURN secret) naming user, device, room, audio and video mute flags and admission end. The user is the token's `account_id` claim, else its subject, so peers never see a wallet the namespace named an account for. It proxies the socket to the SFU's WireGuard address. The SFU takes identity only from the ticket, and kicks the peer when its admission ends.
 
 ### Media and TURN
 
@@ -74,7 +74,7 @@ TURN is one `orama-turn` process per host serving every namespace on it. The fir
 
 ### Kick, mute and role placement
 
-A kick revokes the user's admissions first, then posts to every SFU of the namespace, not only the owner, since probes can change who hosts a room. Each SFU keeps a kick log that compares admission generations, so a user re-admitted after a kick can rejoin at once. A mute is enforced per audio packet on the server and survives rejoin. Control calls carry a MAC with a nonce, valid 60 s and refused on reuse.
+A kick revokes the user's admissions first, then posts to every SFU of the namespace, not only the owner, since probes can change who hosts a room. Each SFU keeps a kick log that compares admission generations, so a user re-admitted after a kick can rejoin at once. A kick can target one device alone, by its session device id. Audio and video mutes are separate, enforced per packet, and survive rejoin. Control calls carry a MAC with a nonce, valid 60 s and refused on reuse.
 
 A reconciler on every node runs each 60 s to match SFU and TURN placement to the allocation table. Only the lowest-sorted live member reallocates, and only under a strict majority of viable members. Stopping a unit needs a clean read showing no allocation, so a registry error never causes an outage.
 

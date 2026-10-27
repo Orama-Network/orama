@@ -12,15 +12,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Orama-Network/orama/core/pkg/serverless"
 	"github.com/Orama-Network/orama/core/pkg/sfu/ctrlauth"
 	"github.com/Orama-Network/orama/core/pkg/sfu/roomid"
 )
 
-// What the namespace's functions do to its rooms: admit a user, kick one, mute
-// one (the webrtc_admit, webrtc_kick and webrtc_mute host functions). The
-// admission and the mute are recorded in the namespace's database, which is
-// what the next join is judged by; the kick and the mute also go to the SFU that
-// owns the room, because the peer is connected there now.
+// What the namespace's functions do to its rooms: admit a user or one device of
+// theirs, kick a user or one device, mute a user's audio or their video, and
+// read the admission a device holds (the webrtc_admit, webrtc_kick,
+// webrtc_kick_device, webrtc_mute, webrtc_mute_video and webrtc_admission host
+// functions). Admissions, revocations and mutes are recorded in the namespace's
+// database, which is what the next join is judged by; kicks and mutes also go to
+// the SFUs, because the peer is connected to one of them now.
 
 const (
 	// MaxAdmissionTTL is the longest an admission may be issued for. An admission
@@ -70,18 +73,83 @@ func (h *WebRTCHandlers) Kick(ctx context.Context, ns, room, user string) error 
 	return nil
 }
 
-// Mute stops (or resumes) the forwarding of user's audio in room, on the
-// namespace's SFUs, and records it so it holds when they rejoin.
-func (h *WebRTCHandlers) Mute(ctx context.Context, ns, room, user string, muted bool) error {
+// KickDevice revokes the admission of one device of user to room and removes
+// that device's connection from the namespace's SFUs; the user's other devices
+// stay. device is the session's device id (get_caller_device_id), and "" is
+// refused: a session bound to no device is kicked with the user. As with Kick,
+// the revocation comes first and is what keeps the device out.
+func (h *WebRTCHandlers) KickDevice(ctx context.Context, ns, room, user, device string) error {
 	if err := h.checkControl(ns, room, user); err != nil {
 		return err
 	}
-	if err := h.admissions.SetMuted(ctx, ns, room, user, muted); err != nil {
+	if err := checkDevice(device); err != nil {
 		return err
 	}
+	gen, err := h.admissions.RevokeDevice(ctx, ns, room, user, device)
+	if err != nil {
+		return err
+	}
+	req := ctrlauth.KickRequest{Room: room, UserID: user, DeviceID: device, AtMs: h.now().UnixMilli(), AdmitGen: gen}
+	if err := h.callAll(ctx, ns, ctrlauth.KickDevicePath, req); err != nil {
+		return fmt.Errorf("the admission of device %q of %q to room %q is revoked, but its connection could not be closed: %w", device, user, room, err)
+	}
+	return nil
+}
+
+// Mute stops (or resumes) the forwarding of user's audio in room, on the
+// namespace's SFUs, and records it so it holds when they rejoin.
+func (h *WebRTCHandlers) Mute(ctx context.Context, ns, room, user string, muted bool) error {
+	return h.mute(ctx, ns, room, user, MediaAudio, muted)
+}
+
+// MuteVideo is Mute for the user's video: every video track, camera and
+// screen. Their audio is untouched, as Mute leaves their video.
+func (h *WebRTCHandlers) MuteVideo(ctx context.Context, ns, room, user string, muted bool) error {
+	return h.mute(ctx, ns, room, user, MediaVideo, muted)
+}
+
+func (h *WebRTCHandlers) mute(ctx context.Context, ns, room, user string, m Media, muted bool) error {
+	if err := h.checkControl(ns, room, user); err != nil {
+		return err
+	}
+	if err := h.admissions.SetMuted(ctx, ns, room, user, m, muted); err != nil {
+		return err
+	}
+	path := ctrlauth.MutePath
+	if m == MediaVideo {
+		path = ctrlauth.VideoMutePath
+	}
 	req := ctrlauth.MuteRequest{Room: room, UserID: user, Muted: muted, AtMs: h.now().UnixMilli()}
-	if err := h.callAll(ctx, ns, ctrlauth.MutePath, req); err != nil {
-		return fmt.Errorf("the mute of %q in room %q is recorded, but the SFU could not be told: %w", user, room, err)
+	if err := h.callAll(ctx, ns, path, req); err != nil {
+		return fmt.Errorf("the %s mute of %q in room %q is recorded, but the SFU could not be told: %w", m, user, room, err)
+	}
+	return nil
+}
+
+// AdmissionOf reads what the namespace has on record for device ("": a session
+// bound to no device) of user in room, judged exactly as a join from that
+// device is when the namespace requires admission.
+func (h *WebRTCHandlers) AdmissionOf(ctx context.Context, ns, room, user, device string) (serverless.WebRTCAdmission, error) {
+	if err := h.checkControl(ns, room, user); err != nil {
+		return serverless.WebRTCAdmission{}, err
+	}
+	if len(device) > maxIdentityLen {
+		return serverless.WebRTCAdmission{}, fmt.Errorf("device id is %d bytes, the limit is %d", len(device), maxIdentityLen)
+	}
+	a, err := h.admissions.Lookup(ctx, ns, room, user, device)
+	if err != nil {
+		return serverless.WebRTCAdmission{}, err
+	}
+	return serverless.WebRTCAdmission{
+		Admitted: a.Valid, Revoked: !a.Valid && a.Revoked, Expired: !a.Valid && !a.Revoked && a.Expired,
+		Muted: a.Muted, VideoMuted: a.VideoMuted, ExpiresAt: a.ValidUntil,
+	}, nil
+}
+
+// checkDevice bounds a device a function names to kick.
+func checkDevice(device string) error {
+	if device == "" || len(device) > maxIdentityLen {
+		return fmt.Errorf("device must be 1 to %d bytes (a session bound to no device is kicked with webrtc_kick)", maxIdentityLen)
 	}
 	return nil
 }

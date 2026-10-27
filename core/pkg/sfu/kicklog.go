@@ -30,10 +30,14 @@ const kickWindow = ctrlauth.TicketTTL + kickSkewMargin
 // than the kick's by more than kickSkewMargin (the gateways' clocks), which only
 // a ticket issued after the revocation can have. Entries older than the window
 // can refuse nothing, and are dropped.
+//
+// A kick names the user (every device of theirs) or one device of the user. A
+// ticket is refused by a kick of its user, and by a kick of the device it was
+// issued for; a kick of one device refuses no other device's ticket.
 type kickLog struct {
 	mu    sync.Mutex
 	now   func() time.Time
-	kicks map[string]kickRecord // room + "\x00" + user
+	kicks map[string]kickRecord // kickKey, or deviceKickKey for a device kick
 }
 
 type kickRecord struct {
@@ -46,7 +50,21 @@ func newKickLog() *kickLog { return &kickLog{now: time.Now, kicks: make(map[stri
 
 func kickKey(room, user string) string { return room + "\x00" + user }
 
-func (k *kickLog) record(room, user string, atMs, gen int64) {
+// deviceKickKey keys a kick of one device. Room, user and device ids hold no
+// NUL, so it collides with no kickKey and with no other device's key.
+func deviceKickKey(room, user, device string) string { return kickKey(room, user) + "\x00" + device }
+
+// logKey is the key of a kick of device ("": every device) of user in room.
+func logKey(room, user, device string) string {
+	if device == "" {
+		return kickKey(room, user)
+	}
+	return deviceKickKey(room, user, device)
+}
+
+// record logs a kick of user from room: of every device of theirs when device
+// is "", of that device alone otherwise.
+func (k *kickLog) record(room, user, device string, atMs, gen int64) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	now := k.now()
@@ -55,7 +73,7 @@ func (k *kickLog) record(room, user string, atMs, gen int64) {
 			delete(k.kicks, key)
 		}
 	}
-	key := kickKey(room, user)
+	key := logKey(room, user, device)
 	if prev, ok := k.kicks[key]; ok {
 		atMs = max(atMs, prev.atMs)
 		// A kick that carries no generation (an old gateway, or no admission
@@ -69,13 +87,22 @@ func (k *kickLog) record(room, user string, atMs, gen int64) {
 	k.kicks[key] = kickRecord{atMs: atMs, gen: gen, seen: now}
 }
 
-// refuses reports whether a ticket for (room, user), issued at issuedMs by a
-// gateway on the admission of generation gen (0: none) and received now,
-// predates a kick.
-func (k *kickLog) refuses(room, user string, issuedMs, gen int64) bool {
+// refuses reports whether a ticket for (room, user) from device ("": a session
+// bound to none), issued at issuedMs by a gateway on the admission of
+// generation gen (0: none) and received now, predates a kick of the user or of
+// that device.
+func (k *kickLog) refuses(room, user, device string, issuedMs, gen int64) bool {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	rec, ok := k.kicks[kickKey(room, user)]
+	if k.refusedBy(kickKey(room, user), issuedMs, gen) {
+		return true
+	}
+	return device != "" && k.refusedBy(deviceKickKey(room, user, device), issuedMs, gen)
+}
+
+// refusedBy applies one logged kick to a ticket. The caller holds k.mu.
+func (k *kickLog) refusedBy(key string, issuedMs, gen int64) bool {
+	rec, ok := k.kicks[key]
 	if !ok || k.now().Sub(rec.seen) > kickWindow {
 		return false
 	}

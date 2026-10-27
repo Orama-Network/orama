@@ -38,8 +38,11 @@ type Peer struct {
 	// forwarded. It is read per RTP packet (forwardRTP), so a client that
 	// keeps publishing audio, or modifies itself to, is still silent.
 	muted atomic.Bool
-	// muteMu makes setting muted and telling the room one step, so the
-	// state the room is told last is the state the peer is in.
+	// videoMuted is muted for video: none of the user's video tracks, camera
+	// or screen, is forwarded (media.go).
+	videoMuted atomic.Bool
+	// muteMu makes setting muted or videoMuted and telling the room one step,
+	// so the state the room is told last is the state the peer is in.
 	muteMu sync.Mutex
 	// eventSink is where this peer's membership is reported (ticket.EventSink).
 	eventSink string

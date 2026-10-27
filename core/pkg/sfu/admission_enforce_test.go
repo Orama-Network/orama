@@ -69,7 +69,7 @@ func TestKickLog_usesTheSFUsClockAndTheGatewaySkewMargin(t *testing.T) {
 	k := newKickLog()
 	k.now = func() time.Time { return now }
 	at := now.UnixMilli() // the kicking gateway's clock
-	k.record("r", "alice", at, 0)
+	k.record("r", "alice", "", at, 0)
 
 	cases := []struct {
 		name     string
@@ -89,7 +89,7 @@ func TestKickLog_usesTheSFUsClockAndTheGatewaySkewMargin(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			now = time.Unix(1_800_000_000, 0).Add(c.later)
-			if got := k.refuses(c.room, c.user, c.issuedMs, 0); got != c.want {
+			if got := k.refuses(c.room, c.user, "", c.issuedMs, 0); got != c.want {
 				t.Fatalf("refuses = %v, want %v", got, c.want)
 			}
 		})
@@ -100,10 +100,10 @@ func TestKickLog_dropsKicksOlderThanTheWindowAndKeepsTheLatest(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	k := newKickLog()
 	k.now = func() time.Time { return now }
-	k.record("r", "old", now.UnixMilli(), 0)
+	k.record("r", "old", "", now.UnixMilli(), 0)
 	now = now.Add(kickWindow + time.Second)
-	k.record("r", "alice", 2000, 0)
-	k.record("r", "alice", 1000, 0) // an older kick does not move the time back
+	k.record("r", "alice", "", 2000, 0)
+	k.record("r", "alice", "", 1000, 0) // an older kick does not move the time back
 	if _, ok := k.kicks[kickKey("r", "old")]; ok {
 		t.Error("a kick past the window was kept")
 	}
@@ -234,7 +234,7 @@ func TestKickLog_generationsDecideWhereBothExistAndNoClockIsConsulted(t *testing
 	k := newKickLog()
 	k.now = func() time.Time { return now }
 	at := now.UnixMilli()
-	k.record("r", "alice", at, 4)
+	k.record("r", "alice", "", at, 4)
 
 	cases := []struct {
 		name     string
@@ -251,7 +251,7 @@ func TestKickLog_generationsDecideWhereBothExistAndNoClockIsConsulted(t *testing
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := k.refuses("r", "alice", c.issuedMs, c.gen); got != c.want {
+			if got := k.refuses("r", "alice", "", c.issuedMs, c.gen); got != c.want {
 				t.Fatalf("refuses = %v, want %v", got, c.want)
 			}
 		})
@@ -263,11 +263,11 @@ func TestKickLog_aKickWithoutAGenerationKeepsTheClockRuleForTicketsWithOne(t *te
 	k := newKickLog()
 	k.now = func() time.Time { return now }
 	at := now.UnixMilli()
-	k.record("r", "alice", at, 0) // a gateway that predates generations, or a namespace with none
-	if !k.refuses("r", "alice", at-1000, 7) {
+	k.record("r", "alice", "", at, 0) // a gateway that predates generations, or a namespace with none
+	if !k.refuses("r", "alice", "", at-1000, 7) {
 		t.Error("a ticket issued before the kick was let in")
 	}
-	if k.refuses("r", "alice", at+kickSkewMargin.Milliseconds()+1, 7) {
+	if k.refuses("r", "alice", "", at+kickSkewMargin.Milliseconds()+1, 7) {
 		t.Error("a ticket issued after the kick was refused")
 	}
 }
@@ -276,13 +276,13 @@ func TestKickLog_keepsTheNewestGenerationAndExpiresWithTheWindow(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	k := newKickLog()
 	k.now = func() time.Time { return now }
-	k.record("r", "alice", 2000, 6)
-	k.record("r", "alice", 1000, 3) // a late, older kick does not lower it
+	k.record("r", "alice", "", 2000, 6)
+	k.record("r", "alice", "", 1000, 3) // a late, older kick does not lower it
 	if got := k.kicks[kickKey("r", "alice")].gen; got != 6 {
 		t.Fatalf("generation = %d, want 6", got)
 	}
 	now = now.Add(kickWindow + time.Second)
-	if k.refuses("r", "alice", 1, 5) {
+	if k.refuses("r", "alice", "", 1, 5) {
 		t.Error("a kick past the window still refuses")
 	}
 }
@@ -318,15 +318,15 @@ func TestKickLog_aKickWithoutAGenerationAfterOneWithStillRefusesTheTicketsBefore
 	k := newKickLog()
 	k.now = func() time.Time { return now }
 	first := now.UnixMilli()
-	k.record("r", "alice", first, 5)
+	k.record("r", "alice", "", first, 5)
 	readmittedTicket := first + 2000 // issued on the gen-6 re-admission
 	second := first + 5000
-	k.record("r", "alice", second, 0)
+	k.record("r", "alice", "", second, 0)
 
-	if !k.refuses("r", "alice", readmittedTicket, 6) {
+	if !k.refuses("r", "alice", "", readmittedTicket, 6) {
 		t.Error("a ticket issued before the second kick passed it")
 	}
-	if k.refuses("r", "alice", second+kickSkewMargin.Milliseconds()+1, 7) {
+	if k.refuses("r", "alice", "", second+kickSkewMargin.Milliseconds()+1, 7) {
 		t.Error("a ticket issued well after the second kick was refused")
 	}
 }

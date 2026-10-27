@@ -83,6 +83,9 @@ type Ticket struct {
 	// Muted is set when the namespace has muted this user in this room: the
 	// SFU forwards none of their audio from the start.
 	Muted bool `json:"muted,omitempty"`
+	// VideoMuted is Muted for video: the SFU forwards none of the user's video
+	// tracks (camera or screen) from the start.
+	VideoMuted bool `json:"vmuted,omitempty"`
 	// EventSink is the internal URL of a namespace gateway the SFU reports
 	// membership to.
 	EventSink string `json:"sink,omitempty"`

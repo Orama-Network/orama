@@ -813,8 +813,18 @@ type HostServices interface {
 	WebRTCAdmit(ctx context.Context, room, user, device string, ttl time.Duration) (string, error)
 	// WebRTCKick revokes user's admissions to room and closes their connection.
 	WebRTCKick(ctx context.Context, room, user string) error
+	// WebRTCKickDevice revokes the admission of one device of user to room and
+	// closes that device's connection; the user's other devices stay.
+	WebRTCKickDevice(ctx context.Context, room, user, device string) error
 	// WebRTCMute stops (or resumes) the forwarding of user's audio in room.
 	WebRTCMute(ctx context.Context, room, user string, muted bool) error
+	// WebRTCMuteVideo stops (or resumes) the forwarding of user's video
+	// (camera and screen) in room, apart from their audio.
+	WebRTCMuteVideo(ctx context.Context, room, user string, muted bool) error
+	// WebRTCAdmission returns what the namespace has on record for device of
+	// user in room, as JSON {"room","user_id","device_id","admitted","revoked",
+	// "expired","muted","video_muted","expires_at"}.
+	WebRTCAdmission(ctx context.Context, room, user, device string) (string, error)
 
 	// Job operations
 	EnqueueBackground(ctx context.Context, functionName string, payload []byte) (string, error)
@@ -849,7 +859,25 @@ type DeployResult struct {
 type WebRTCController interface {
 	Admit(ctx context.Context, namespace, room, user, device string, ttl time.Duration) (time.Time, error)
 	Kick(ctx context.Context, namespace, room, user string) error
+	KickDevice(ctx context.Context, namespace, room, user, device string) error
 	Mute(ctx context.Context, namespace, room, user string, muted bool) error
+	MuteVideo(ctx context.Context, namespace, room, user string, muted bool) error
+	AdmissionOf(ctx context.Context, namespace, room, user, device string) (WebRTCAdmission, error)
+}
+
+// WebRTCAdmission is what a namespace has on record for one device of a user
+// in one room, judged as a join from that device is when the namespace
+// requires admission.
+type WebRTCAdmission struct {
+	// Admitted is set when a join from the device would be let in.
+	Admitted bool
+	// Revoked and Expired say why it would not; neither is set when the
+	// namespace never admitted the device (or the user from every device).
+	Revoked, Expired bool
+	// Muted and VideoMuted are the user's forced mutes in the room.
+	Muted, VideoMuted bool
+	// ExpiresAt is the unix second the admission ends, 0 when not admitted.
+	ExpiresAt int64
 }
 
 // CallerAttestation is what a caller's device attestation proved (feat-941):

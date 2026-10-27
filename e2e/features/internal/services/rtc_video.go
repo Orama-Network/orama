@@ -17,13 +17,36 @@ const (
 	videoSSRC       = 0xE2E1
 )
 
-// StartVideo is Start(false) plus a published VP8 track, and a reader of the
-// RTCP the SFU sends back for it: KeyframeRequests counts the PLI and FIR that
-// reach the publisher (website/src/docs/developer/webrtc.mdx#keyframes-plifir).
+// StartVideo is Start(false) plus a published video track (addVideo).
 func (p *RTCPeer) StartVideo() error {
 	if err := p.Start(false); err != nil {
 		return err
 	}
+	if err := p.addVideo(); err != nil {
+		return err
+	}
+	return p.sendOffer()
+}
+
+// StartAudioVideo is Start(false) plus a published audio track and a published
+// video track, offered together, as a client with its microphone and camera on.
+func (p *RTCPeer) StartAudioVideo() error {
+	if err := p.Start(false); err != nil {
+		return err
+	}
+	if err := p.addAudio(); err != nil {
+		return err
+	}
+	if err := p.addVideo(); err != nil {
+		return err
+	}
+	return p.sendOffer()
+}
+
+// addVideo adds a VP8 track to the peer's connection, for its next offer, and
+// reads the RTCP the SFU sends back for it: KeyframeRequests counts the PLI and
+// FIR that reach the publisher (website/src/docs/developer/webrtc.mdx#keyframes-plifir).
+func (p *RTCPeer) addVideo() error {
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: videoClockRate}, "video", "e2e-video-"+p.PeerID)
 	if err != nil {
 		return fmt.Errorf("create the video track: %w", err)
@@ -47,7 +70,7 @@ func (p *RTCPeer) StartVideo() error {
 			}
 		}
 	}()
-	return p.sendOffer()
+	return nil
 }
 
 // PublishVideo writes a burst of RTP packets on the video track.

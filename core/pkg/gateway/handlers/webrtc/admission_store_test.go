@@ -122,7 +122,7 @@ func TestAdmissionStore_muteSurvivesReadmissionAndIsPerRoomAndUser(t *testing.T)
 	s.Admit(ctx, "ns", "r1", "bob", "", time.Hour)
 	s.Admit(ctx, "ns", "r2", "alice", "", time.Hour)
 
-	if err := s.SetMuted(ctx, "ns", "r1", "alice", true); err != nil {
+	if err := s.SetMuted(ctx, "ns", "r1", "alice", MediaAudio, true); err != nil {
 		t.Fatal(err)
 	}
 	s.Admit(ctx, "ns", "r1", "alice", "", 2*time.Hour)
@@ -135,7 +135,7 @@ func TestAdmissionStore_muteSurvivesReadmissionAndIsPerRoomAndUser(t *testing.T)
 			t.Errorf("%s/%s muted = %v, want %v", c.room, c.user, a.Muted, c.muted)
 		}
 	}
-	s.SetMuted(ctx, "ns", "r1", "alice", false)
+	s.SetMuted(ctx, "ns", "r1", "alice", MediaAudio, false)
 	if a, _ := s.Lookup(ctx, "ns", "r1", "alice", ""); a.Muted {
 		t.Error("unmuting did not take")
 	}
@@ -187,7 +187,7 @@ func TestAdmissionStore_onRealRqlite(t *testing.T) {
 	if a, err := s.Lookup(ctx, "ns", "r1", "alice", "dev"); err != nil || !a.Valid {
 		t.Fatalf("admission = %+v err=%v", a, err)
 	}
-	s.SetMuted(ctx, "ns", "r1", "alice", true)
+	s.SetMuted(ctx, "ns", "r1", "alice", MediaAudio, true)
 	s.Revoke(ctx, "ns", "r1", "alice")
 	a, err := s.Lookup(ctx, "ns", "r1", "alice", "")
 	if err != nil || a.Valid || !a.Revoked || !a.Muted {
@@ -198,6 +198,18 @@ func TestAdmissionStore_onRealRqlite(t *testing.T) {
 	}
 	if a, _ := s.Lookup(ctx, "ns", "r1", "alice", ""); !a.Valid || a.Revoked {
 		t.Fatalf("after re-admission: %+v", a)
+	}
+	// feat-964: the device revocation's upsert and the video mute's column.
+	s.SetMuted(ctx, "ns", "r1", "alice", MediaVideo, true)
+	gen, err := s.RevokeDevice(ctx, "ns", "r1", "alice", "did-phone")
+	if err != nil || gen == 0 {
+		t.Fatalf("RevokeDevice = %d, %v", gen, err)
+	}
+	if a, _ := s.Lookup(ctx, "ns", "r1", "alice", "did-phone"); a.Valid || !a.Revoked || !a.VideoMuted {
+		t.Fatalf("the kicked device: %+v, want revoked and video-muted", a)
+	}
+	if a, _ := s.Lookup(ctx, "ns", "r1", "alice", "did-tablet"); !a.Valid {
+		t.Fatalf("another device after the phone's kick: %+v", a)
 	}
 }
 
@@ -213,7 +225,7 @@ func TestAdmissionStore_mutedRowsArePurgedAfterTheRetention(t *testing.T) {
 		return n
 	}
 	s.Admit(ctx, "ns", "r1", "muted", "", time.Hour)
-	s.SetMuted(ctx, "ns", "r1", "muted", true)
+	s.SetMuted(ctx, "ns", "r1", "muted", MediaAudio, true)
 	s.Admit(ctx, "ns", "r1", "plain", "", time.Hour)
 
 	// Expired, within the retention: the plain row goes, the muted one stays and
@@ -244,9 +256,9 @@ func TestAdmissionStore_purgeLeavesLiveAndOtherNamespacesAlone(t *testing.T) {
 	s, db, now := newSQLiteStore(t)
 	ctx := context.Background()
 	s.Admit(ctx, "other", "r1", "alice", "", time.Hour)
-	s.SetMuted(ctx, "other", "r1", "alice", true)
+	s.SetMuted(ctx, "other", "r1", "alice", MediaAudio, true)
 	s.Admit(ctx, "ns", "r1", "live", "", 30*24*time.Hour)
-	s.SetMuted(ctx, "ns", "r1", "live", true)
+	s.SetMuted(ctx, "ns", "r1", "live", MediaAudio, true)
 
 	*now = now.Add(2 * mutedRetention)
 	s.Admit(ctx, "ns", "r2", "bob", "", time.Hour)

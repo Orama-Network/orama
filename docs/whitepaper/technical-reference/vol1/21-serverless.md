@@ -305,7 +305,10 @@ Every host function is a Go method on `Engine` registered by `registerHostModule
 | env, host, orama | `turn_credentials` | `() -> P64` | the gateway's TURN secret | `configured`, `username`, `password`, `ttl` (24 h), `uris`, `namespace`; `configured` false without a secret |
 | env, host, orama | `webrtc_admit` | `(s room, s user, s device, i64 ttl_seconds) -> P64` | the namespace's WebRTC controller | Controller bound 1 s to 24 h; `room`, `user`, `device` bounded; 100 `webrtc_*` calls per invocation |
 | env, host, orama | `webrtc_kick` | `(s room, s user) -> i32` | the namespace's WebRTC controller | Revokes admissions then closes on every SFU; 1 only if both worked; repeat is safe |
-| env, host, orama | `webrtc_mute` | `(s room, s user, i32 muted) -> i32` | the namespace's WebRTC controller | Non-zero mutes; recorded so a rejoin stays muted |
+| env, host, orama | `webrtc_kick_device` | `(s room, s user, s device) -> i32` | the namespace's WebRTC controller | Revokes one device's admission then closes that device on every SFU; empty device refused |
+| env, host, orama | `webrtc_mute` | `(s room, s user, i32 muted) -> i32` | the namespace's WebRTC controller | Non-zero mutes the audio; recorded so a rejoin stays muted |
+| env, host, orama | `webrtc_mute_video` | `(s room, s user, i32 muted) -> i32` | the namespace's WebRTC controller | Non-zero mutes the video (camera and screen), apart from the audio; recorded so a rejoin stays muted |
+| env, host, orama | `webrtc_admission` | `(s room, s user, s device) -> P64` | the namespace's WebRTC controller | The device's admission as the join path judges it, JSON |
 
 **Capabilities and stored objects.** These need a session bound to a device: the issuing device is the caller's `did`, and a capability is revoked with the device that issued it.
 

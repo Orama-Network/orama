@@ -381,6 +381,18 @@ func (m *MockHostServices) WebRTCMute(ctx context.Context, room, user string, mu
 	return nil
 }
 
+func (m *MockHostServices) WebRTCKickDevice(ctx context.Context, room, user, device string) error {
+	return nil
+}
+
+func (m *MockHostServices) WebRTCMuteVideo(ctx context.Context, room, user string, muted bool) error {
+	return nil
+}
+
+func (m *MockHostServices) WebRTCAdmission(ctx context.Context, room, user, device string) (string, error) {
+	return "", nil
+}
+
 func (m *MockHostServices) EnqueueBackground(ctx context.Context, functionName string, payload []byte) (string, error) {
 	return "job-123", nil
 }

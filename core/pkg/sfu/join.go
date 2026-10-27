@@ -28,7 +28,7 @@ func (s *Server) openTicket(r *http.Request) (ctrlauth.Ticket, int, error) {
 		return t, http.StatusUnauthorized, err
 	case t.Namespace != s.config.Namespace:
 		return t, http.StatusForbidden, errors.New("join ticket is for another namespace")
-	case s.kicks.refuses(t.Room, t.UserID, t.IssuedAtMs, t.AdmitGen):
+	case s.kicks.refuses(t.Room, t.UserID, t.DeviceID, t.IssuedAtMs, t.AdmitGen):
 		return t, http.StatusForbidden, errUserKicked
 	}
 	return t, 0, nil
@@ -117,6 +117,7 @@ func (s *Server) joinRoom(conn *websocket.Conn, roomID string, ticket ctrlauth.T
 	peer.DeviceID = ticket.DeviceID
 	peer.eventSink = ticket.EventSink
 	peer.muted.Store(ticket.Muted)
+	peer.videoMuted.Store(ticket.VideoMuted)
 	s.roomManager.reporter.observe(ticket.EventSink)
 
 	if err := room.AddPeer(peer); err != nil {
@@ -129,7 +130,7 @@ func (s *Server) joinRoom(conn *websocket.Conn, roomID string, ticket ctrlauth.T
 	// find no peer to remove. Checked again now that the peer is in the room, a
 	// kick is either in the log here or finds the peer there: it records before
 	// it looks.
-	if s.kicks.refuses(ticket.Room, ticket.UserID, ticket.IssuedAtMs, ticket.AdmitGen) {
+	if s.kicks.refuses(ticket.Room, ticket.UserID, ticket.DeviceID, ticket.IssuedAtMs, ticket.AdmitGen) {
 		s.logger.Info("Joined peer removed: the user was kicked while its join was in flight",
 			zap.String("room", ticket.Room), zap.String("user_id", ticket.UserID))
 		room.KickPeer(peer)
@@ -147,7 +148,8 @@ func (s *Server) joinRoom(conn *websocket.Conn, roomID string, ticket ctrlauth.T
 	}))
 	// After the welcome, so the peer is told of a correction as it is told of
 	// any later mute, by a forced participant-state, once it knows who it is.
-	s.settleMute(room, peer, ticket)
+	s.settleMute(room, peer, ticket, mediaAudio)
+	s.settleMute(room, peer, ticket, mediaVideo)
 
 	// Send TURN credentials
 	if s.config.TURNSecret != "" && len(s.config.TURNServers) > 0 {
@@ -166,21 +168,23 @@ func (s *Server) joinRoom(conn *websocket.Conn, roomID string, ticket ctrlauth.T
 	s.signalingLoop(peer, room)
 }
 
-// settleMute gives peer the logged mute state when its ticket's snapshot of it
-// is older than the log. It reads the log after the peer is in the room, so a
-// mute is either in the log here or finds the peer there. It then reads again: a
-// mute landing between the first read and the store would apply to the peer
-// first and be overwritten by the older state, and is seen by the second read.
-func (s *Server) settleMute(room *Room, peer *Peer, ticket ctrlauth.Ticket) {
+// settleMute gives peer the logged mute state of m when its ticket's snapshot
+// of it is older than the log. It reads the log after the peer is in the room,
+// so a mute is either in the log here or finds the peer there. It then reads
+// again: a mute landing between the first read and the store would apply to the
+// peer first and be overwritten by the older state, and is seen by the second
+// read.
+func (s *Server) settleMute(room *Room, peer *Peer, ticket ctrlauth.Ticket, m media) {
+	mutes, flag := s.muteLogOf(m), peer.mutedFlag(m)
 	for {
-		rec, ok := s.mutes.correction(ticket.Room, ticket.UserID, ticket.IssuedAtMs)
+		rec, ok := mutes.correction(ticket.Room, ticket.UserID, ticket.IssuedAtMs)
 		if !ok {
 			return
 		}
-		if peer.muted.Load() != rec.muted {
-			room.setPeerMuted(peer, rec.muted)
+		if flag.Load() != rec.muted {
+			room.setPeerMuted(peer, m, rec.muted)
 		}
-		if s.mutes.current(ticket.Room, ticket.UserID) == rec.seq {
+		if mutes.current(ticket.Room, ticket.UserID) == rec.seq {
 			return
 		}
 	}
