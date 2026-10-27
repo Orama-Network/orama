@@ -72,8 +72,6 @@ export function createClient(config: ClientConfig): Client {
   };
 }
 
-export { createWorkloadClient } from "./workload";
-export type { WorkloadClientConfig } from "./workload";
 export { HttpClient } from "./core/http";
 export type { NetworkErrorCallback, NetworkErrorContext } from "./core/http";
 export { WSClient } from "./core/ws";

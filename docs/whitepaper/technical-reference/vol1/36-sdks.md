@@ -33,7 +33,7 @@ The Go client exists for a different reason. The gateway is itself a client of t
 
 **Sub-client.** One class per gateway area: `AuthClient`, `DBClient`, `PubSubClient`, `CacheClient`, `StorageClient`, `FunctionsClient`, `NetworkClient`. `createClient` builds one `HttpClient`, hands it to all of them, and returns them as `client.auth`, `client.db` and so on (`sdk/src/index.ts:createClient`). Because they share the `HttpClient`, `debug: true`, the `fetch` override, the token and the failure callback apply to all of them at once.
 
-**Workload client.** A `Client` built for code running as a deployment, which holds a platform-issued JWT and no key (`sdk/src/workload.ts:createWorkloadClient`).
+**Workload client.** A `Client` built for code running as a deployment, which holds a platform-issued JWT and no key (`sdk/src/workload.ts:createWorkloadClient`, on the `./workload` subpath).
 
 **Chain client.** `OramaChainClient`, a separate class on the `./chain` subpath. It does not use `HttpClient`: the chain's read proxy is open and a wallet has no gateway credential, so it has its own small `fetch` wrapper (`sdk/src/chain/client.ts:OramaChainClient`).
 
@@ -50,8 +50,9 @@ The Go client exists for a different reason. The gateway is itself a client of t
 | `@orama-network/orama` | `sdk/src/index.ts` | `isomorphic-ws`; `ws` optional peer on Node | The default import; no Node-only imports |
 | `@orama-network/orama/chain` | `sdk/src/chain/index.ts` | optional peers `@bufbuild/protobuf`, `@noble/curves`, `@noble/hashes`, `@scure/base` | The generated protobuf codecs are large |
 | `@orama-network/orama/relay` | `sdk/src/storage/relay-transport.ts` | Node, `node:tls`, `ws` | `node:tls` must not reach React Native or browser bundles |
+| `@orama-network/orama/workload` | `sdk/src/workload.ts` | Node `node:fs/promises` for its default token reader | Metro resolves dynamic imports too, so even a lazy `import("node:fs/promises")` in the default entry fails a React Native build |
 
-The package is built by `tsup` to both ESM and CommonJS, with separate type declarations per format, `sideEffects: false`, and `engines.node >= 20.19` (`sdk/package.json`, `sdk/tsup.config.ts`). The CommonJS build exists because the package once shipped ESM only while documenting `require`. `sdk/tests/unit/packaging.test.ts` pins the exports map, the two formats and the rule that the core has no cryptography dependency.
+The package is built by `tsup` to both ESM and CommonJS, with separate type declarations per format, `sideEffects: false`, and `engines.node >= 20.19` (`sdk/package.json`, `sdk/tsup.config.ts`). The CommonJS build exists because the package once shipped ESM only while documenting `require`. `sdk/tests/unit/packaging.test.ts` pins the exports map, the two formats, the rule that the core has no cryptography dependency, and the rule that the built default entry reaches no Node built-in: it walks every static import, dynamic import and `require` from `dist/index.js` and `dist/index.cjs` through the chunks they load.
 
 ## How it works
 
@@ -97,7 +98,7 @@ Sessions bound to a device add a signature step. The platform owns the device ke
 
 #### Workload tokens
 
-A deployment is handed a token, not a key. `createWorkloadClient` reads `ORAMA_GATEWAY_URL` and the path in `ORAMA_TOKEN_FILE`, reads the token, builds a client with that JWT and schedules a renewal (`sdk/src/workload.ts`). The renewal calls `POST /v1/auth/renew` with the token it holds; the gateway only renews a deployment's own token this way, because letting any access token mint its own successor would make a stolen one valid for ever (`AuthClient.renew`). The timer fires 5 min before expiry (`RENEWAL_MARGIN_MS`), starts from an assumed 60 min lifetime until the first response gives the real one (`core/pkg/gateway/auth/workload.go:WorkloadTokenLifetime` is one hour), never fires sooner than 30 s, and is `unref`ed so it does not keep the process alive. A failed renewal reschedules itself 5 min later and leaves the token in place; the 401 path then covers a token that has already expired. The grants are resolved at mint time, so a grant removed from the deployment reaches the process at its next renewal ([authorization](14-authorization.md#workload-identity)).
+A deployment is handed a token, not a key. `createWorkloadClient` (from `@orama-network/orama/workload`) reads `ORAMA_GATEWAY_URL` and the path in `ORAMA_TOKEN_FILE`, reads the token, builds a client with that JWT and schedules a renewal (`sdk/src/workload.ts`). The renewal calls `POST /v1/auth/renew` with the token it holds; the gateway only renews a deployment's own token this way, because letting any access token mint its own successor would make a stolen one valid for ever (`AuthClient.renew`). The timer fires 5 min before expiry (`RENEWAL_MARGIN_MS`), starts from an assumed 60 min lifetime until the first response gives the real one (`core/pkg/gateway/auth/workload.go:WorkloadTokenLifetime` is one hour), never fires sooner than 30 s, and is `unref`ed so it does not keep the process alive. A failed renewal reschedules itself 5 min later and leaves the token in place; the 401 path then covers a token that has already expired. The grants are resolved at mint time, so a grant removed from the deployment reaches the process at its next renewal ([authorization](14-authorization.md#workload-identity)).
 
 ### The request pipeline
 

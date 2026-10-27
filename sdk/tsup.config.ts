@@ -10,6 +10,9 @@ export default defineConfig({
     // Node-only (node:tls): its own entry so the core stays bundleable for
     // React Native and browsers.
     relay: "src/storage/relay-transport.ts",
+    // Node by default (it reads its token file with node:fs/promises): its own
+    // entry so Metro, which resolves dynamic imports too, never meets it.
+    workload: "src/workload.ts",
   },
 
   // Both module formats.

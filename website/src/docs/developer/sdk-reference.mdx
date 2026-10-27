@@ -18,6 +18,9 @@ ESM and CommonJS, in Node and in a browser bundle. Node 20.19 or later. Entry po
 | `@orama-network/orama` | The client and everything below |
 | `@orama-network/orama/chain` | Read the chain, build and sign transactions. Optional peers: `@bufbuild/protobuf`, `@noble/curves`, `@noble/hashes`, `@scure/base` (all 2.x) |
 | `@orama-network/orama/relay` | `RelayedFetch` for relayed downloads. Node.js only |
+| `@orama-network/orama/workload` | `createWorkloadClient` for a deployed app. Node.js by default (it reads its token file with `node:fs/promises`; pass `readFile` to read it another way) |
+
+The default entry imports no Node built-in, so a React Native (Metro) or browser bundle takes it as it is, with no resolver configuration.
 
 The vault client is a separate package, `@orama-network/orama-vault`; see [Secrets](#secrets).
 
@@ -95,7 +98,7 @@ The key is exchanged once, before the first request, for a 15-minute token carry
 ### A deployed app
 
 ```ts
-import { createWorkloadClient } from "@orama-network/orama";
+import { createWorkloadClient } from "@orama-network/orama/workload";
 const client = await createWorkloadClient();
 ```
 

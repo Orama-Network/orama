@@ -64,6 +64,16 @@
         "default": "./dist/relay.cjs"
       }
     },
+    "./workload": {
+      "import": {
+        "types": "./dist/workload.d.ts",
+        "default": "./dist/workload.js"
+      },
+      "require": {
+        "types": "./dist/workload.d.cts",
+        "default": "./dist/workload.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "sideEffects": false,
