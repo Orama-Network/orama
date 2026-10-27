@@ -202,15 +202,26 @@ func checkPatchAge(level int64, maxMonths int, now time.Time) error {
 	if maxMonths == 0 {
 		return nil
 	}
-	year, month := level/100, level%100
-	if level == 0 || month < 1 || month > 12 {
+	age, ok := PatchAgeMonths(level, now)
+	if !ok {
 		return refusal.Invalid(refusal.ReasonPatchLevel, "the secure hardware attests OS patch level %d, not YYYYMM", level)
 	}
-	age := (int64(now.Year())*12 + int64(now.Month())) - (year*12 + month)
 	if age > int64(maxMonths) {
 		return refusal.Invalid(refusal.ReasonPatchLevel, "OS patch level %d is %d months old, more than %d", level, age, maxMonths)
 	}
 	return nil
+}
+
+// PatchAgeMonths is how many calendar months an OS patch level (YYYYMM) is
+// before now, ok false when level is not of that form. The gateway applies it
+// again to a recorded patch level, so that a patch window narrowed after a
+// device attested reaches that device's tokens too.
+func PatchAgeMonths(level int64, now time.Time) (int64, bool) {
+	year, month := level/100, level%100
+	if level <= 0 || month < 1 || month > 12 {
+		return 0, false
+	}
+	return (int64(now.Year())*12 + int64(now.Month())) - (year*12 + month), true
 }
 
 func packageNames(pkgs []PackageInfo) string {

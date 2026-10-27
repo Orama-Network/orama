@@ -48,6 +48,11 @@ const (
 	testDigest  = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 	codeRequired = "ATTESTATION_REQUIRED"
+
+	// The verdicts get_caller_attestation_verdict tells a function
+	// (website/src/docs/developer/device-attestation.mdx#in-a-function).
+	verdictNotConfigured = "not_configured"
+	verdictRequired      = "attestation_required"
 	// invalidMessage is all a refused proof is told
 	// (core/pkg/gateway/handlers/attest/errors.go).
 	invalidMessage = "this proof does not show this namespace's app on a genuine device"
@@ -205,6 +210,30 @@ func invoke(t testing.TB, fx *fixture, bearer string, header http.Header) *gw.Re
 	}
 	return fx.c.MustSend(t, gw.Req{Method: http.MethodPost, Path: "/v1/functions/" + fixtureName + "/invoke",
 		Query: url.Values{"namespace": {fx.n.Name}}, Bearer: bearer, Header: h, Body: []byte("{}")})
+}
+
+// verdictView is get_caller_attestation_verdict's answer.
+type verdictView struct {
+	Mode    string `json:"mode"`
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// fixtureVerdict reads the verdict the fixture was told from its answer.
+func fixtureVerdict(t testing.TB, resp *gw.Response) verdictView {
+	t.Helper()
+	var out struct {
+		Verdict string `json:"verdict"`
+	}
+	if err := resp.Expect(t, http.StatusOK).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	var v verdictView
+	if err := json.Unmarshal([]byte(out.Verdict), &v); err != nil {
+		t.Fatalf("the fixture was told %q, not a verdict: %v", out.Verdict, err)
+	}
+	return v
 }
 
 // refusedUpgrade opens a WebSocket that must be refused, and returns the

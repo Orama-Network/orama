@@ -789,6 +789,10 @@ type HostServices interface {
 	// GetCallerAttestation returns what the caller's device attestation
 	// proved, as JSON, or empty when the caller's token carries none.
 	GetCallerAttestation(ctx context.Context) string
+	// GetCallerAttestationVerdict returns the gateway's verdict on the
+	// caller under the namespace's attestation policy as it is now, as JSON
+	// (AttestationVerdict), or empty outside a gateway.
+	GetCallerAttestationVerdict(ctx context.Context) string
 	// GetCallerCapability returns what the caller's capability grants, as
 	// JSON, or empty when the caller came in on a credential.
 	GetCallerCapability(ctx context.Context) string
@@ -862,4 +866,54 @@ type CallerAttestation struct {
 	AppVersion string `json:"app_version"`
 	// AttestedAt is when the device last attested, unix seconds.
 	AttestedAt int64 `json:"attested_at"`
+	// Development marks an iOS key of the App Attest development environment.
+	Development bool `json:"development,omitempty"`
+	// GrapheneOS marks an Android device booting GrapheneOS.
+	GrapheneOS bool `json:"grapheneos,omitempty"`
+	// SigningCertDigests are the lowercase-hex SHA-256 digests of the
+	// certificates the attested Android app is signed with.
+	SigningCertDigests []string `json:"signing_cert_digests,omitempty"`
+	// OSPatchLevel is the Android OS security patch level the device
+	// attested (YYYYMM), 0 when it attested none.
+	OSPatchLevel int `json:"os_patch_level,omitempty"`
 }
+
+// AttestationVerdict is the gateway's verdict on a caller under its
+// namespace's attestation policy as the policy is when the function asks
+// (feat-965), in every mode: monitor refuses nothing at the gateway, but a
+// function reads here what enforcing would decide. Read via host fn
+// `get_caller_attestation_verdict`.
+type AttestationVerdict struct {
+	// Mode is the namespace's attestation mode: off, monitor or enforce;
+	// empty when the verdict is VerdictUnavailable.
+	Mode string `json:"mode,omitempty"`
+	// Verdict is one of the Verdict* values.
+	Verdict string `json:"verdict"`
+	// Reason names the check that refused an invalid attestation or an old
+	// build ("signing_cert", "package", "boot_key", "app_version", …); empty
+	// otherwise.
+	Reason string `json:"reason,omitempty"`
+	// Message says why, in words; empty when the caller is admitted.
+	Message string `json:"message,omitempty"`
+}
+
+// The verdicts of AttestationVerdict.
+const (
+	// VerdictAdmitted: the policy admits the caller now.
+	VerdictAdmitted = "admitted"
+	// VerdictAttestationRequired: the caller has not attested, or must
+	// attest again — its Android attestation is past the re-attestation
+	// interval, or does not show what the policy now asks.
+	VerdictAttestationRequired = "attestation_required"
+	// VerdictAppUpdateRequired: the build is older than the policy admits.
+	VerdictAppUpdateRequired = "app_update_required"
+	// VerdictAttestationInvalid: the attestation is of something the policy
+	// does not admit (Reason says which check).
+	VerdictAttestationInvalid = "attestation_invalid"
+	// VerdictNotConfigured: the namespace's mode is off; there is no app to
+	// judge against, and no caller is admitted as attested.
+	VerdictNotConfigured = "not_configured"
+	// VerdictUnavailable: the gateway cannot read the namespace's policy
+	// right now. Retry; it says nothing about the caller.
+	VerdictUnavailable = "unavailable"
+)

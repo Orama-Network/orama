@@ -974,6 +974,9 @@ func initializeServerless(logger *logging.ColoredLogger, cfg *Config, deps *Depe
 	if err := wireCapabilities(cfg.ClusterSecret, authService, deps.ServerlessHandlers, hostFuncs, logger.Logger); err != nil {
 		return err
 	}
+	// A function asks for the verdict on its caller's attestation under the
+	// policy requests are judged by (feat-965).
+	hostFuncs.SetAttestationJudge(serverlesshandlers.NewAttestationJudge(authService))
 
 	logger.ComponentInfo(logging.ComponentGeneral, "Serverless function engine ready",
 		zap.Int("default_memory_mb", engineCfg.DefaultMemoryLimitMB),

@@ -140,7 +140,8 @@ func (g *Gateway) judgeAttestation(w http.ResponseWriter, r *http.Request, names
 	if claims != nil {
 		att = claims.Att
 	}
-	refusal, message := auth.JudgeAttestation(policy, att, time.Now())
+	judgement := auth.JudgeAttestation(policy, att, time.Now())
+	refusal, message := judgement.Refusal, judgement.Message
 
 	// Whether the caller is one attestation judges at all is asked only of a
 	// caller it would refuse — and of an unattested socket, which a policy
@@ -223,6 +224,5 @@ func (g attestationSocketGate) AttestationRefusal(namespace string, claims *auth
 	if err != nil || policy.Mode != auth.AttestationEnforce {
 		return "", err
 	}
-	refusal, _ := auth.JudgeAttestation(policy, claims.Att, now)
-	return attestationCodes[refusal], nil
+	return attestationCodes[auth.JudgeAttestation(policy, claims.Att, now).Refusal], nil
 }

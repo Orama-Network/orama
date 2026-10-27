@@ -942,6 +942,7 @@ func (e *Engine) registerHostModule(ctx context.Context) error {
 			NewFunctionBuilder().WithFunc(e.hGetCallerJWTSubject).Export("get_caller_jwt_subject").
 			NewFunctionBuilder().WithFunc(e.hGetCallerDeviceID).Export("get_caller_device_id").
 			NewFunctionBuilder().WithFunc(e.hGetCallerAttestation).Export("get_caller_attestation").
+			NewFunctionBuilder().WithFunc(e.hGetCallerAttestationVerdict).Export("get_caller_attestation_verdict").
 			NewFunctionBuilder().WithFunc(e.hGetCallerCapability).Export("get_caller_capability").
 			NewFunctionBuilder().WithFunc(e.hCapabilityMint).Export("capability_mint").
 			NewFunctionBuilder().WithFunc(e.hCapabilityRevoke).Export("capability_revoke").
@@ -1037,6 +1038,13 @@ func (e *Engine) hGetCallerDeviceID(ctx context.Context, mod api.Module) uint64 
 func (e *Engine) hGetCallerAttestation(ctx context.Context, mod api.Module) uint64 {
 	att := e.hostServices.GetCallerAttestation(ctx)
 	return e.executor.WriteToGuest(ctx, mod, []byte(att))
+}
+
+// hGetCallerAttestationVerdict returns the gateway's verdict on the caller under
+// the namespace's attestation policy as it is now, as JSON (feat-965).
+func (e *Engine) hGetCallerAttestationVerdict(ctx context.Context, mod api.Module) uint64 {
+	verdict := e.hostServices.GetCallerAttestationVerdict(ctx)
+	return e.executor.WriteToGuest(ctx, mod, []byte(verdict))
 }
 
 // hGetCallerClaim reads a claim name from guest memory, looks it up on the

@@ -272,6 +272,8 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `ios_public_key` | TEXT | yes | `''` |  |
 | `ios_counter` | INTEGER | yes | `0` |  |
 | `attested_at` | TIMESTAMP | yes | - |  |
+| `signing_cert_digests` | TEXT | yes | `'[]'` |  |
+| `os_patch_level` | INTEGER | yes | `0` |  |
 
 ## device_authorizations
 

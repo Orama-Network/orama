@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -183,7 +184,12 @@ func (s *Service) AttestAndroid(ctx context.Context, namespace, deviceID, challe
 		appVersion: verdict.AppVersion,
 		bootKey:    fmt.Sprintf("%x", verdict.BootKey),
 		grapheneOS: verdict.GrapheneOS,
-		attestedAt: time.Now().UTC(),
+		// Kept so the policy as it is later judges them again: a digest
+		// removed from it, or a narrower patch window, reaches this device
+		// before it next attests.
+		signingDigests: verdict.SigningCertDigests,
+		osPatchLevel:   verdict.OSPatchLevel,
+		attestedAt:     time.Now().UTC(),
 	}
 	if err := s.storeAttestation(ctx, nsID, deviceID, record); err != nil {
 		return nil, err
@@ -233,17 +239,24 @@ type attestationRecord struct {
 	iosKeyID    string
 	iosPublic   string
 	iosCounter  uint32
-	attestedAt  time.Time
+	// signingDigests and osPatchLevel are what an Android attestation proved
+	// that the policy can narrow afterwards; a row from before migration 094
+	// has neither.
+	signingDigests []string
+	osPatchLevel   int
+	attestedAt     time.Time
 }
 
 func (r attestationRecord) claim() *AttestationClaim {
 	return &AttestationClaim{
-		Platform:    string(r.platform),
-		AppID:       r.appID,
-		AppVersion:  r.appVersion,
-		Development: r.development,
-		GrapheneOS:  r.grapheneOS,
-		AttestedAt:  r.attestedAt.Unix(),
+		Platform:           string(r.platform),
+		AppID:              r.appID,
+		AppVersion:         r.appVersion,
+		Development:        r.development,
+		GrapheneOS:         r.grapheneOS,
+		SigningCertDigests: r.signingDigests,
+		OSPatchLevel:       r.osPatchLevel,
+		AttestedAt:         r.attestedAt.Unix(),
 	}
 }
 
@@ -254,10 +267,19 @@ func (r attestationRecord) claim() *AttestationClaim {
 // booting an OS signed with another key is refused. The pin is the upsert's
 // own condition, so two attestations racing cannot both set it.
 func (s *Service) storeAttestation(ctx context.Context, nsID interface{}, deviceID string, r attestationRecord) error {
+	digests := r.signingDigests
+	if digests == nil {
+		digests = []string{}
+	}
+	digestsJSON, err := json.Marshal(digests)
+	if err != nil {
+		return fmt.Errorf("encode the attested signing-certificate digests: %w", err)
+	}
 	res, err := s.db.Exec(client.WithInternalAuth(ctx),
 		`INSERT INTO device_attestations(namespace_id, device_id, platform, app_id, app_version, development,
-		   verified_boot_key, grapheneos, ios_key_id, ios_public_key, ios_counter, attested_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		   verified_boot_key, grapheneos, ios_key_id, ios_public_key, ios_counter,
+		   signing_cert_digests, os_patch_level, attested_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(namespace_id, device_id) DO UPDATE SET
 		   platform = excluded.platform,
 		   app_id = excluded.app_id,
@@ -268,11 +290,14 @@ func (s *Service) storeAttestation(ctx context.Context, nsID interface{}, device
 		   ios_key_id = excluded.ios_key_id,
 		   ios_public_key = excluded.ios_public_key,
 		   ios_counter = excluded.ios_counter,
+		   signing_cert_digests = excluded.signing_cert_digests,
+		   os_patch_level = excluded.os_patch_level,
 		   attested_at = excluded.attested_at
 		 WHERE device_attestations.verified_boot_key = ''
 		    OR device_attestations.verified_boot_key = excluded.verified_boot_key`,
 		nsID, deviceID, string(r.platform), r.appID, r.appVersion, boolInt(r.development),
-		r.bootKey, boolInt(r.grapheneOS), r.iosKeyID, r.iosPublic, int64(r.iosCounter), r.attestedAt.Format(sqliteTime))
+		r.bootKey, boolInt(r.grapheneOS), r.iosKeyID, r.iosPublic, int64(r.iosCounter),
+		string(digestsJSON), r.osPatchLevel, r.attestedAt.Format(sqliteTime))
 	if err != nil {
 		return fmt.Errorf("record the attestation: %w", err)
 	}
@@ -295,30 +320,36 @@ func (s *Service) readAttestation(ctx context.Context, nsID interface{}, deviceI
 	}
 	res, err := db.Query(client.WithInternalAuth(ctx),
 		`SELECT platform, app_id, app_version, development, verified_boot_key, grapheneos,
-		        ios_key_id, ios_public_key, ios_counter, attested_at
+		        ios_key_id, ios_public_key, ios_counter, signing_cert_digests, os_patch_level, attested_at
 		   FROM device_attestations WHERE namespace_id = ? AND device_id = ? LIMIT 1`, nsID, deviceID)
 	if err != nil {
 		return attestationRecord{}, false, fmt.Errorf("read the device's attestation: %w", err)
 	}
-	if res == nil || len(res.Rows) == 0 || len(res.Rows[0]) < 10 {
+	if res == nil || len(res.Rows) == 0 || len(res.Rows[0]) < 12 {
 		return attestationRecord{}, false, nil
 	}
 	row := res.Rows[0]
-	at, _, readable := parseTimestamp(row[9])
+	var digests []string
+	if err := json.Unmarshal([]byte(getStringVal(row[9])), &digests); err != nil {
+		return attestationRecord{}, false, fmt.Errorf("the device's attested signing-certificate digests are not a JSON list: %w", err)
+	}
+	at, _, readable := parseTimestamp(row[11])
 	if !readable {
-		return attestationRecord{}, false, fmt.Errorf("the device's attestation time %v cannot be read", row[9])
+		return attestationRecord{}, false, fmt.Errorf("the device's attestation time %v cannot be read", row[11])
 	}
 	return attestationRecord{
-		platform:    attest.Platform(getStringVal(row[0])),
-		appID:       getStringVal(row[1]),
-		appVersion:  getStringVal(row[2]),
-		development: toInt64(row[3]) != 0,
-		bootKey:     getStringVal(row[4]),
-		grapheneOS:  toInt64(row[5]) != 0,
-		iosKeyID:    getStringVal(row[6]),
-		iosPublic:   getStringVal(row[7]),
-		iosCounter:  uint32(toInt64(row[8])),
-		attestedAt:  at,
+		platform:       attest.Platform(getStringVal(row[0])),
+		appID:          getStringVal(row[1]),
+		appVersion:     getStringVal(row[2]),
+		development:    toInt64(row[3]) != 0,
+		bootKey:        getStringVal(row[4]),
+		grapheneOS:     toInt64(row[5]) != 0,
+		iosKeyID:       getStringVal(row[6]),
+		iosPublic:      getStringVal(row[7]),
+		iosCounter:     uint32(toInt64(row[8])),
+		signingDigests: digests,
+		osPatchLevel:   int(toInt64(row[10])),
+		attestedAt:     at,
 	}, true, nil
 }
 
@@ -330,8 +361,12 @@ func (s *Service) readAttestation(ctx context.Context, nsID interface{}, deviceI
 // on the requests it judges — so monitor mode refuses nothing, here as
 // anywhere. Only a namespace whose mode is not off is read at all.
 //
-// An Android device's record is what it proved at its last attestation; the
-// policy's re-attestation interval decides how long that lasts. An iOS device
+// An Android device's record is what it proved at its last attestation, and
+// the token carries all of it that the policy can narrow afterwards — the
+// package, the build, the signing-certificate digests, GrapheneOS and the OS
+// patch level — so JudgeAttestation holds every request to the policy as it is
+// then, as it holds the re-attestation interval. A record from before the
+// digests were kept carries none and is judged "attest again". An iOS device
 // proves itself again on every refresh with an App Attest assertion over the
 // refresh's device proof (proof.AppAttest, over AttestationBinding(proof.ID,
 // device)), its counter moved by compare-and-swap, so a replayed assertion

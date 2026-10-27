@@ -3,6 +3,7 @@ package hostfunctions
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/Orama-Network/orama/core/pkg/serverless"
@@ -41,7 +42,8 @@ func TestGetCallerAttestation_emptyWithoutOne(t *testing.T) {
 func TestFunctionInvoke_carriesTheCallersAttestation(t *testing.T) {
 	inv := &nestedRecordingInvoker{}
 	h := hostWithInvoker(inv)
-	att := &serverless.CallerAttestation{Platform: "ios", AppID: "TEAM.chat.anchat", AttestedAt: 1}
+	att := &serverless.CallerAttestation{Platform: "android", AppID: "chat.anchat", AttestedAt: 1,
+		SigningCertDigests: []string{"0123"}, OSPatchLevel: 202609}
 	ctx := parentCtx(&serverless.InvocationContext{
 		Namespace: "anchat-test", TriggerType: serverless.TriggerTypeHTTP,
 		CallerJWTSubject: "0xwallet", CallerDeviceID: "device-1", CallerAttestation: att,
@@ -49,7 +51,7 @@ func TestFunctionInvoke_carriesTheCallersAttestation(t *testing.T) {
 	if _, err := h.FunctionInvoke(ctx, "callee", []byte(`{}`)); err != nil {
 		t.Fatalf("FunctionInvoke: %v", err)
 	}
-	if got := inv.last().CallerAttestation; got == nil || *got != *att {
+	if got := inv.last().CallerAttestation; got == nil || !reflect.DeepEqual(got, att) {
 		t.Errorf("nested call attestation = %+v", got)
 	}
 }

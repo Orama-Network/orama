@@ -1,6 +1,7 @@
 package attest
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strconv"
 
@@ -87,17 +88,27 @@ func (v *verifier) AttestAndroid(p Policy, chain [][]byte, challenge []byte) (Ve
 		return Verdict{}, refusal.UpdateRequired("versionCode %d is below the minimum %d", d.VersionCode, p.MinAndroidVersionCode)
 	}
 	return Verdict{
-		Platform:         PlatformAndroid,
-		AppID:            d.Package,
-		AppVersion:       strconv.FormatInt(d.VersionCode, 10),
-		SecurityLevel:    SecurityLevel(d.SecurityLevel),
-		BootState:        BootState(d.BootState),
-		BootKey:          d.BootKey,
-		GrapheneOS:       d.BootState == android.BootSelfSigned,
-		OSPatchLevel:     int(d.OSPatchLevel),
-		VendorPatchLevel: int(d.VendorPatchLevel),
-		BootPatchLevel:   int(d.BootPatchLevel),
+		Platform:           PlatformAndroid,
+		AppID:              d.Package,
+		AppVersion:         strconv.FormatInt(d.VersionCode, 10),
+		SecurityLevel:      SecurityLevel(d.SecurityLevel),
+		BootState:          BootState(d.BootState),
+		BootKey:            d.BootKey,
+		GrapheneOS:         d.BootState == android.BootSelfSigned,
+		SigningCertDigests: hexDigests(d.SigningDigests),
+		OSPatchLevel:       int(d.OSPatchLevel),
+		VendorPatchLevel:   int(d.VendorPatchLevel),
+		BootPatchLevel:     int(d.BootPatchLevel),
 	}, nil
+}
+
+// hexDigests writes raw SHA-256 digests the way a policy names them.
+func hexDigests(raw [][]byte) []string {
+	out := make([]string, len(raw))
+	for i, d := range raw {
+		out[i] = hex.EncodeToString(d)
+	}
+	return out
 }
 
 func (p Policy) appleExpect() apple.Expect {

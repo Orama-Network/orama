@@ -135,6 +135,12 @@ func TestAttestAndroid_realPixelAndTheVersionGate(t *testing.T) {
 	if got.Platform != PlatformAndroid || got.AppVersion != "0" || got.BootState != BootVerified || got.GrapheneOS || got.SecurityLevel != SecurityTEE || got.OSPatchLevel != 202511 {
 		t.Fatalf("%+v", got)
 	}
+	// The gateway records the attested signing digests to judge them again
+	// when the policy changes (feat-965): they are reported as the policy
+	// names them.
+	if len(got.SigningCertDigests) != 1 || got.SigningCertDigests[0] != digest {
+		t.Errorf("signing digests %v, want [%s]", got.SigningCertDigests, digest)
+	}
 
 	p.MinAndroidVersionCode = 1
 	_, err = v.AttestAndroid(p, chain, challenge)

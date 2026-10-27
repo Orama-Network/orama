@@ -4,13 +4,15 @@
 # the function WebSocket and a pub/sub subscription; under monitor nothing is
 # refused and the cluster's would-refuse count rises; the attestation routes
 # issue single-use challenges to a device-bound session only and refuse a
-# forged proof without telling which check failed. A genuine attestation needs
+# forged proof without telling which check failed; a function is told its
+# caller's verdict under the current policy in every mode
+# (get_caller_attestation_verdict). A genuine attestation needs
 # a real iPhone or Android device and is accepted by hand (the task's
 # real-device acceptance), not here. Needs tinygo on the runner's PATH.
 id: device-attestation
 title: Device attestation policy, monitor and enforce
 area: auth
-subtasks: [4022]
+subtasks: [4022, 4162]
 stage: 3
 destructive: false
 requires:
@@ -30,3 +32,4 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#device-attestation-at-the-gateway: under monitor nothing is refused and the would-refuse count rises"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#device-attestation-at-the-gateway: a challenge is for a device-bound session, used once; a forged proof is ATTESTATION_INVALID"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#device-attestation-at-the-gateway: the policy is validated whole and set only with namespace write; the owner is not judged"
+    - "website/src/docs/developer/device-attestation.mdx#in-a-function: get_caller_attestation_verdict is not_configured while the mode is off, and under monitor and enforce the verdict judged under the policy at the call, monitor included"

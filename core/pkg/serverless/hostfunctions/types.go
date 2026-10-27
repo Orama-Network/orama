@@ -143,6 +143,10 @@ type HostFunctions struct {
 	// nothing.
 	attestation AttestationEnforcement
 
+	// attestationJudge answers get_caller_attestation_verdict (attestation.go).
+	// Set once at gateway start; nil answers nothing.
+	attestationJudge AttestationJudge
+
 	// webrtc admits, kicks and mutes users in the namespace's rooms. Set once
 	// at gateway start via SetWebRTCController; nil means webrtc_admit,
 	// webrtc_kick and webrtc_mute fail and say why.

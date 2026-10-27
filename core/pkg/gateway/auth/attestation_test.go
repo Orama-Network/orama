@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -165,36 +166,68 @@ func TestAttestationPolicies_aStaleUnreadableCopyIsNotOff(t *testing.T) {
 }
 
 func TestJudgeAttestation(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
+	now := time.Unix(1_800_000_000, 0) // 2027-01
 	droid := androidPolicy(AttestationEnforce).Normalize()
 	droid.Android.MinVersionCode = 400
+	patched := droid
+	patched.Android.MaxPatchAgeMonths = 6
 	apple := iosPolicy(AttestationEnforce).Normalize()
 	apple.IOS.MinBundleVersion = "2.1"
 	fresh := now.Add(-time.Hour).Unix()
+	signed := []string{testDigest}
+	android := func(edit func(*AttestationClaim)) *AttestationClaim {
+		c := &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412",
+			SigningCertDigests: signed, OSPatchLevel: 202612, AttestedAt: fresh}
+		if edit != nil {
+			edit(c)
+		}
+		return c
+	}
 	cases := []struct {
 		name   string
 		policy AttestationPolicy
 		claim  *AttestationClaim
 		want   AttestationRefusal
+		reason refusal.Reason
 	}{
-		{"off judges nothing", AttestationPolicy{Mode: AttestationOff}, nil, AttestationAdmitted},
-		{"no attestation", droid, nil, AttestationRequired},
-		{"a genuine android build", droid, &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412", AttestedAt: fresh}, AttestationAdmitted},
-		{"another package", droid, &AttestationClaim{Platform: "android", AppID: "evil.anchat", AppVersion: "412", AttestedAt: fresh}, AttestationInvalid},
-		{"an old build", droid, &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "399", AttestedAt: fresh}, AttestationUpdateRequired},
-		{"an attestation past the interval", droid, &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412",
-			AttestedAt: now.Add(-DefaultReattestInterval - time.Minute).Unix()}, AttestationRequired},
-		{"grapheneos not admitted", droid, &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412", GrapheneOS: true, AttestedAt: fresh}, AttestationInvalid},
-		{"ios on an android-only namespace", droid, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AttestedAt: fresh}, AttestationInvalid},
-		{"a genuine ios build", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AppVersion: "2.1.3", AttestedAt: fresh}, AttestationAdmitted},
-		{"ios 26 signs no version", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AttestedAt: fresh}, AttestationAdmitted},
-		{"an old ios build", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AppVersion: "2.0.9", AttestedAt: fresh}, AttestationUpdateRequired},
-		{"a development key", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", Development: true, AttestedAt: fresh}, AttestationInvalid},
-		{"an unknown platform", apple, &AttestationClaim{Platform: "symbian", AttestedAt: fresh}, AttestationInvalid},
+		{"off judges nothing", AttestationPolicy{Mode: AttestationOff}, nil, AttestationAdmitted, ""},
+		{"no attestation", droid, nil, AttestationRequired, ""},
+		{"a genuine android build", droid, android(nil), AttestationAdmitted, ""},
+		{"monitor judges as enforce does", androidPolicy(AttestationMonitor).Normalize(), android(func(c *AttestationClaim) { c.AppID = "evil.anchat" }), AttestationInvalid, refusal.ReasonPackage},
+		{"another package", droid, android(func(c *AttestationClaim) { c.AppID = "evil.anchat" }), AttestationInvalid, refusal.ReasonPackage},
+		{"an old build", droid, android(func(c *AttestationClaim) { c.AppVersion = "399" }), AttestationUpdateRequired, refusal.ReasonAppVersion},
+		{"an attestation past the interval", droid, android(func(c *AttestationClaim) {
+			c.AttestedAt = now.Add(-DefaultReattestInterval - time.Minute).Unix()
+		}), AttestationRequired, ""},
+		{"grapheneos not admitted", droid, android(func(c *AttestationClaim) { c.GrapheneOS = true }), AttestationInvalid, refusal.ReasonBootKey},
+		// feat-965: a signing certificate removed from the policy reaches a
+		// device that attested with it, and a record that never kept its
+		// certificate is not taken on trust.
+		{"a signing certificate the policy no longer names", droid, android(func(c *AttestationClaim) {
+			c.SigningCertDigests = []string{strings.Repeat("ab", 32)}
+		}), AttestationInvalid, refusal.ReasonSigningCert},
+		{"one of two certificates no longer named", droid, android(func(c *AttestationClaim) {
+			c.SigningCertDigests = []string{testDigest, strings.Repeat("ab", 32)}
+		}), AttestationInvalid, refusal.ReasonSigningCert},
+		{"a record that kept no certificate", droid, android(func(c *AttestationClaim) { c.SigningCertDigests = nil }), AttestationRequired, ""},
+		{"a patch inside the window", patched, android(nil), AttestationAdmitted, ""},
+		{"a patch past a narrowed window", patched, android(func(c *AttestationClaim) { c.OSPatchLevel = 202605 }), AttestationRequired, ""},
+		{"a record that kept no patch level, under a window", patched, android(func(c *AttestationClaim) { c.OSPatchLevel = 0 }), AttestationRequired, ""},
+		{"no patch level and no window", droid, android(func(c *AttestationClaim) { c.OSPatchLevel = 0 }), AttestationAdmitted, ""},
+		{"ios on an android-only namespace", droid, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AttestedAt: fresh}, AttestationInvalid, refusal.ReasonAppID},
+		{"a genuine ios build", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AppVersion: "2.1.3", AttestedAt: fresh}, AttestationAdmitted, ""},
+		{"ios 26 signs no version", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AttestedAt: fresh}, AttestationAdmitted, ""},
+		{"an old ios build", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", AppVersion: "2.0.9", AttestedAt: fresh}, AttestationUpdateRequired, refusal.ReasonAppVersion},
+		{"a development key", apple, &AttestationClaim{Platform: "ios", AppID: "TEAM123.chat.anchat", Development: true, AttestedAt: fresh}, AttestationInvalid, refusal.ReasonEnvironment},
+		{"an unknown platform", apple, &AttestationClaim{Platform: "symbian", AttestedAt: fresh}, AttestationInvalid, refusal.ReasonAppID},
 	}
 	for _, c := range cases {
-		if got, why := JudgeAttestation(c.policy, c.claim, now); got != c.want {
-			t.Errorf("%s: %s (%s), want %s", c.name, got, why, c.want)
+		got := JudgeAttestation(c.policy, c.claim, now)
+		if got.Refusal != c.want || got.Reason != c.reason {
+			t.Errorf("%s: %s/%q (%s), want %s/%q", c.name, got.Refusal, got.Reason, got.Message, c.want, c.reason)
+		}
+		if (got.Refusal == AttestationAdmitted) != (got.Message == "") {
+			t.Errorf("%s: %s with message %q", c.name, got.Refusal, got.Message)
 		}
 	}
 }
@@ -236,7 +269,81 @@ func TestAttestationChallenge_isSingleUseAndForOneDevice(t *testing.T) {
 
 func androidVerdict(bootKey byte) attest.Verdict {
 	return attest.Verdict{Platform: attest.PlatformAndroid, AppID: "chat.anchat", AppVersion: "412",
-		BootState: attest.BootVerified, BootKey: []byte{bootKey, 2, 3}}
+		BootState: attest.BootVerified, BootKey: []byte{bootKey, 2, 3},
+		SigningCertDigests: []string{testDigest}, OSPatchLevel: 202609}
+}
+
+// feat-965: the record keeps the signing certificates and the patch level the
+// device attested, every refresh's token carries them, and a certificate
+// removed from the policy afterwards refuses that token — in monitor as in
+// enforce — without the device attesting again.
+func TestAttestAndroid_aNarrowedPolicyReachesTheRefreshedToken(t *testing.T) {
+	s, v := attestingRegistry(t, androidPolicy(AttestationMonitor))
+	ctx := context.Background()
+	v.verdict = androidVerdict(1)
+	challenge, _, _ := s.IssueAttestationChallenge(ctx, "anchat", attestedDevice)
+	if _, err := s.AttestAndroid(ctx, "anchat", attestedDevice, challenge, [][]byte{{1}}); err != nil {
+		t.Fatalf("attest: %v", err)
+	}
+	att, err := s.attestationForToken(ctx, "anchat", attestedDevice, nil)
+	if err != nil || att == nil {
+		t.Fatalf("the refresh carried %+v, %v", att, err)
+	}
+	if !reflect.DeepEqual(att.SigningCertDigests, []string{testDigest}) || att.OSPatchLevel != 202609 {
+		t.Errorf("the refresh carried digests %v and patch level %d", att.SigningCertDigests, att.OSPatchLevel)
+	}
+	before, _ := s.AttestationPolicyFor("anchat")
+	if got := JudgeAttestation(before, att, time.Now()); got.Refusal != AttestationAdmitted {
+		t.Fatalf("the policy it attested under refuses it: %+v", got)
+	}
+
+	rotated := androidPolicy(AttestationMonitor)
+	rotated.Android.SigningCertDigests = []string{strings.Repeat("ab", 32)}
+	if err := s.SetAttestationPolicy(ctx, "anchat", rotated, "0xowner"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.AttestationPolicyFor("anchat")
+	att, err = s.attestationForToken(ctx, "anchat", attestedDevice, nil)
+	if err != nil || att == nil {
+		t.Fatalf("the refresh after the rotation carried %+v, %v", att, err)
+	}
+	if got := JudgeAttestation(after, att, time.Now()); got.Refusal != AttestationInvalid || got.Reason != refusal.ReasonSigningCert {
+		t.Errorf("a token of the removed certificate is judged %+v", got)
+	}
+}
+
+// A record kept before migration 094 has no signing digest: its token is
+// judged "attest again", never admitted on trust, and the next attestation
+// records the digests.
+func TestAttestationForToken_aRecordWithoutDigestsMustAttestAgain(t *testing.T) {
+	s, v, db := attestingRegistryDB(t, androidPolicy(AttestationEnforce))
+	ctx := context.Background()
+	if _, err := db.db.Exec(`INSERT INTO device_attestations(namespace_id, device_id, platform, app_id, app_version, attested_at)
+		VALUES (10, ?, 'android', 'chat.anchat', '412', datetime('now'))`, attestedDevice); err != nil {
+		t.Fatalf("seed a row as migration 091 wrote it: %v", err)
+	}
+	att, err := s.attestationForToken(ctx, "anchat", attestedDevice, nil)
+	if err != nil || att == nil {
+		t.Fatalf("the refresh carried %+v, %v", att, err)
+	}
+	policy, _ := s.AttestationPolicyFor("anchat")
+	if got := JudgeAttestation(policy, att, time.Now()); got.Refusal != AttestationRequired {
+		t.Errorf("a record with no digest is judged %+v", got)
+	}
+
+	v.verdict = androidVerdict(0)
+	v.verdict.BootKey = nil
+	challenge, _, _ := s.IssueAttestationChallenge(ctx, "anchat", attestedDevice)
+	if _, err := s.AttestAndroid(ctx, "anchat", attestedDevice, challenge, [][]byte{{1}}); err != nil {
+		t.Fatalf("attest again: %v", err)
+	}
+	att, err = s.attestationForToken(ctx, "anchat", attestedDevice, nil)
+	if err != nil || att == nil {
+		t.Fatalf("the refresh after attesting again carried %+v, %v", att, err)
+	}
+	if got := JudgeAttestation(policy, att, time.Now()); got.Refusal != AttestationAdmitted {
+		t.Errorf("after attesting again the token is judged %+v", got)
+	}
 }
 
 // The proof is bound to the challenge and the device; what it proved is
@@ -347,7 +454,8 @@ func TestAttestationForToken_iosAssertsOncePerRefresh(t *testing.T) {
 // it back; an attestation without a device is never minted.
 func TestReissueAttested_roundTripsTheClaim(t *testing.T) {
 	s := createTestService(t)
-	att := &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412", AttestedAt: time.Now().Unix()}
+	att := &AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: "412",
+		SigningCertDigests: []string{testDigest}, OSPatchLevel: 202609, AttestedAt: time.Now().Unix()}
 	token, _, err := s.ReissueAttested(&JWTClaims{Sub: "0xwallet", Namespace: "anchat", Did: attestedDevice, Sid: "s"}, att)
 	if err != nil {
 		t.Fatal(err)
@@ -356,7 +464,7 @@ func TestReissueAttested_roundTripsTheClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.Att == nil || *claims.Att != *att || claims.Did != attestedDevice || claims.Sid != "s" {
+	if claims.Att == nil || !reflect.DeepEqual(claims.Att, att) || claims.Did != attestedDevice || claims.Sid != "s" {
 		t.Errorf("read back %+v / %+v", claims, claims.Att)
 	}
 	if _, _, err := s.ReissueAttested(&JWTClaims{Sub: "0xwallet", Namespace: "anchat"}, att); !errors.Is(err, ErrAttestationNeedsDevice) {

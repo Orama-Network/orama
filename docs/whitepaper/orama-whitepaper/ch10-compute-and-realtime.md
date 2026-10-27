@@ -3,7 +3,7 @@
 > **At a glance.**
 >
 > - **What:** three per-namespace services layered on the namespace gateway. Serverless functions run tenant WebAssembly in a wazero sandbox inside the gateway. Push notifications route a message to a device through APNs, Expo or ntfy, using the namespace's own credentials. WebRTC runs a pion selective forwarding unit (SFU) on each member node and one shared TURN relay per host.
-> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 51 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
+> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 52 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
 > - **Code:** `core/pkg/serverless/`, `core/pkg/push/`, `core/pkg/sfu/`, `core/pkg/turn/`.
 
 ![Serverless functions: callers, the namespace gateway and what a function can reach](../technical-reference/diagrams/ch21-overview.svg)
@@ -34,7 +34,7 @@ Two trigger kinds start an invocation with no caller. Every gateway polls cron r
 
 ### Host functions and egress
 
-The 51 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, HTTP and nested invocation. A function is the namespace's own code, so host calls do not re-check the caller.
+The 52 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, HTTP and nested invocation. A function is the namespace's own code, so host calls do not re-check the caller.
 
 Outbound `http_fetch` runs from the cluster's own network, so the guard sits where the address is final: a dial-time check on every resolved address and redirect hop refuses loopback, private, link-local and carrier-grade ranges and the chain's block. A name that resolved to an overlay address once passed a URL check and reached the mesh. `anon_fetch` goes through the node's Tor client with no direct fallback, so it fails loudly rather than leak the gateway's address.
 
