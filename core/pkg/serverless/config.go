@@ -52,9 +52,25 @@ type Config struct {
 	// WASM execution limits
 	MaxConcurrentExecutions int `yaml:"max_concurrent_executions"` // Max concurrent WASM module instantiations
 
+	// MaxConcurrentPerNamespace caps how many of MaxConcurrentExecutions one
+	// namespace may hold at once. 0 means half of MaxConcurrentExecutions,
+	// which keeps one tenant from starving the others on a gateway that runs
+	// several namespaces. A namespace gateway runs one namespace, so the
+	// gateway sets it to MaxConcurrentExecutions there: the half it would
+	// otherwise reserve has no other tenant to protect (bug-963).
+	MaxConcurrentPerNamespace int `yaml:"max_concurrent_per_namespace"`
+
 	// WASM compilation cache
 	ModuleCacheSize int  `yaml:"module_cache_size"` // Number of compiled modules to cache
-	EnablePrewarm   bool `yaml:"enable_prewarm"`    // Pre-compile frequently used functions
+	EnablePrewarm   bool `yaml:"enable_prewarm"`    // Compile the served namespace's functions ahead of their first call (prewarm.go)
+
+	// CompilationCacheDir, when set, keeps wazero's compiled machine code on
+	// disk under this directory. A module compiled once is then read back in
+	// milliseconds instead of compiled again in seconds: after a restart, and
+	// after the in-memory module cache evicted it. Empty keeps compiled code in
+	// memory only. The directory must be private to the gateway: wazero maps
+	// what it reads there as executable code.
+	CompilationCacheDir string `yaml:"compilation_cache_dir"`
 
 	// SlowInvokeThresholdMs is the wall-clock (ms) above which Execute emits the
 	// per-phase "slow invocation" diagnostic (bugboard #24/#27). Default 5000.
@@ -66,6 +82,10 @@ type Config struct {
 
 	// Secrets encryption
 	SecretsEncryptionKey string `yaml:"secrets_encryption_key"` // AES-256 key (32 bytes, hex-encoded)
+
+	// NodeID names the node this engine runs on (its peer ID) in every
+	// invocation record, so a record says which gateway ran it (bug-963).
+	NodeID string `yaml:"-"`
 
 	// Logging
 	LogInvocations bool `yaml:"log_invocations"` // Log all invocations to database
@@ -161,6 +181,9 @@ func (c *Config) Validate() []error {
 	}
 	if c.ModuleCacheSize <= 0 {
 		errs = append(errs, &ConfigError{Field: "ModuleCacheSize", Message: "must be positive"})
+	}
+	if c.MaxConcurrentPerNamespace < 0 || (c.MaxConcurrentExecutions > 0 && c.MaxConcurrentPerNamespace > c.MaxConcurrentExecutions) {
+		errs = append(errs, &ConfigError{Field: "MaxConcurrentPerNamespace", Message: "must be between 0 and MaxConcurrentExecutions"})
 	}
 	// CronPollInterval floor — see MinCronPollInterval doc. Zero means
 	// "use the default" (ApplyDefaults handles it); a non-zero value

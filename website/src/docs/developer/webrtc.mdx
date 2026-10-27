@@ -310,7 +310,7 @@ Messages exchanged over the WebSocket signaling channel. Every message is an env
 | `turn-credentials` | `{ username, password, ttl, uris }` | Initial TURN credentials on connect |
 | `refresh-credentials` | `{ username, password, ttl, uris }` | Refreshed TURN credentials (sent at 80% TTL) |
 | `server-draining` | `{ reason, timeoutMs }` | SFU shutting down, reconnect to another node |
-| `participant-state` | `{ peerId, userId, kind, enabled }` | Another participant's audio or video state, or a mute the namespace applied |
+| `participant-state` | `{ peerId, userId, kind, enabled, forced }` | Another participant's audio or video state, or, with `forced: true`, a mute of their audio (`kind: "audio"`, `webrtc_mute`) or video (`kind: "video"`, `webrtc_mute_video`) the namespace applied |
 | `kicked` | `{ code }` | The SFU removed you from the room and closes the socket. `code` is `removed` (the namespace kicked you) or `admission_expired` (the admission you joined on ended) |
 | `error` | `{ code, message }` | Signaling error |
 
@@ -391,7 +391,8 @@ failing RTP write never stops the forwarding of a track to the others.
 ## Identity, admission and moderation
 
 A room's participants are the users the namespace's gateway authenticated, a namespace can decide who may
-join, and its functions can remove or mute a participant. None of it is in the client's hands: the SFU
+join, from which device, and its functions can remove a participant or one of their devices and mute their
+audio or their video. None of it is in the client's hands: the SFU
 takes every one of these decisions from a ticket the namespace's gateway signs, never from a frame the
 client sends.
 
@@ -423,7 +424,7 @@ it is. A client that kept sending one sees the authenticated id come back instea
 How the SFU can trust it: the SFU listens on the WireGuard overlay, where every namespace's services are, so
 being on the overlay proves nothing. The namespace gateway signs a **join ticket** (`pkg/sfu/ctrlauth`) and
 sends it to the SFU in the `X-Orama-SFU-Ticket` header of the signalling upgrade: the namespace, the room,
-the user, the device, whether the user is muted, the gateway's event address, an issue time and an expiry
+the user, the device, whether the user's audio and their video are muted, the gateway's event address, an issue time and an expiry
 30 seconds out, under an HMAC-SHA256 key. The key is HKDF-derived (purpose `webrtc-sfu-control`) from the
 namespace's own TURN secret, which the gateway and the SFU both already hold and no end user does, so one
 namespace's SFU can neither accept another's ticket nor report into it. The gateway deletes whatever the
@@ -440,7 +441,11 @@ clean refusal and the client's retry lands once the gateway is upgraded; there i
 the namespace's nodes one at a time, as the rolling-upgrade procedure does, and do not judge the namespace
 healthy mid-upgrade by joins alone. The same holds for the control calls (kick, mute) and the membership
 events: an old SFU does not serve `/admin/kick` or `/admin/mute`, so a kick made from an upgraded gateway
-fails for that SFU (the revocation stands) until it is upgraded too.
+fails for that SFU (the revocation stands) until it is upgraded too. Likewise an SFU older than the device kick
+and the video mute answers `404` to `/admin/kick-device` and `/admin/mute-video`, and `webrtc_kick_device` and
+`webrtc_mute_video` fail for it (the revocation or mute is recorded) rather than being read as a kick of every
+device or a mute of the audio. An older SFU ignores a ticket's video mute, so a video-muted user who joins
+through it is not muted there until it is upgraded.
 
 ### Admission
 
@@ -464,10 +469,11 @@ webrtc_admit(room, user, device, ttl_seconds) -> {"room","user_id","device_id","
 ```
 
 - `user` is the identity the user will join as ([Identity](#identity)): their `account_id` when the
-  namespace's claims provider names one, otherwise the subject of their session. `webrtc_kick` and
-  `webrtc_mute` take the same identity.
-- `device` is empty to admit the user from any device, or a device id to admit that device only. A session
-  bound to no device is matched only by an admission with no device.
+  namespace's claims provider names one, otherwise the subject of their session. `webrtc_kick`,
+  `webrtc_kick_device`, `webrtc_mute`, `webrtc_mute_video` and `webrtc_admission` take the same identity.
+- `device` is empty to admit the user from any device, or a session's device id to admit that device only
+  ([Admitting one device](#admitting-one-device)). A session bound to no device is matched only by an admission
+  with no device.
 - `ttl_seconds` is 1 to 86400 (24 hours). Admitting again extends the admission and lifts a revocation, and
   keeps a mute on record: an expired admission that carries a mute is kept for 7 days after it expires, so
   admitting the user again within that time does not unmute them. After 7 it is purged, which bounds the table,
@@ -499,7 +505,7 @@ A join that is not admitted is refused before it reaches an SFU, with a typed er
 | The admission has expired | `WEBRTC_ADMISSION_EXPIRED` | `admission_expired` |
 | A function revoked it (`webrtc_kick`) | `WEBRTC_ADMISSION_REVOKED` | `admission_revoked` |
 | The admission records cannot be read | `SERVICE_UNAVAILABLE` (503, retryable) | `admission_unavailable` |
-| The admission tables are not the ones migrations 073 and 075 make | `INTERNAL` (500, not retryable) | `admission_unavailable` |
+| The admission tables are not the ones migrations 073, 075 and 095 make | `INTERNAL` (500, not retryable) | `admission_unavailable` |
 
 A gateway that cannot read the records refuses the join; it never admits on a guess.
 
@@ -508,18 +514,60 @@ A gateway that cannot read the records refuses the join; it never admits on a gu
 the platform used the name) keeps it. The gateway therefore checks both tables the first time it uses them
 (and again after a failure): every column must exist and the primary key must be exactly the migration's. A
 table that does not match is refused with an error naming the table, the missing columns or key, and the
-fix (rename or drop the tenant's table and re-apply the migration), on the join path, in `webrtc_admit`,
-`webrtc_kick`, `webrtc_mute` and the settings route alike. Nothing reads or writes a table that is not the
+fix (rename or drop the tenant's table and re-apply the migration), on the join path, in every `webrtc_*`
+host function and the settings route alike. Nothing reads or writes a table that is not the
 admission table. A table that does not exist at all (the migration has not reached the database yet) is the
-retryable `admission_unavailable`. The platform's own `webrtc_admissions` that lacks only `generation` is
-reported as migration 075 not applied yet, not as a foreign table: the namespace gateway applies 075 when it
-starts, and the next join checks again.
+retryable `admission_unavailable`. The platform's own `webrtc_admissions` that lacks only columns later
+migrations add (`generation`, 075; `video_muted`, 095) is reported as those migrations not applied yet, not as
+a foreign table: the namespace gateway applies them when it starts, and the next join checks again.
 
 Where it lives: the policy (`webrtc_settings`) and the admissions (`webrtc_admissions`) are tables of the
-**namespace's own database** (migrations 073 and 075), checked by whichever namespace gateway takes the join. They
+**namespace's own database** (migrations 073, 075 and 095), checked by whichever namespace gateway takes the join. They
 are the tenant's own policy and grants, so no cluster-wide write sits on the join path; no SFU holds any of
 it, so it survives an SFU restart and is the same whichever node owns the room. A namespace that never turns
 the policy on keeps today's behaviour; the identity rule above applies either way.
+
+### Admitting one device
+
+An application that gives a seat to one of a user's devices admits that device alone, so the user's other
+sessions (another phone, or a device the application has revoked whose session is still valid) are refused
+the room. The device is named by the **device id of its session**: the `did` the gateway puts in the token
+of a session bound to a device ([Devices](/docs/developer/devices)), the thumbprint of the device's key. A
+client cannot choose it, it can only prove it holds the key.
+
+The application holds that id the same way it holds its own: when its device registers with the application
+(the moment the application already trusts, by its own means, that this installation is the device in its
+roster), the function that records it reads the session's device id with `get_caller_device_id` and stores it
+beside the application's own device id. From then on the application names the device by that id:
+
+```
+webrtc_admit(room, user, device, ttl_seconds)        admit that device alone
+webrtc_kick_device(room, user, device) -> 1 | 0       remove that device alone
+webrtc_admission(room, user, device) ->
+  {"room","user_id","device_id","admitted","revoked","expired","muted","video_muted","expires_at"}
+```
+
+- A device admitted by its id joins; any other device of the same account is refused
+  (`WEBRTC_ADMISSION_REQUIRED`) unless it is admitted too, or the user is admitted from every device.
+- `webrtc_kick_device` revokes that device's admission and closes that device's connections on every SFU of
+  the namespace (`kicked`, then a `leave` event with reason `kicked` and its `device_id`); the user's other
+  devices stay connected and admitted. The rejoin is refused (`WEBRTC_ADMISSION_REVOKED`), and so is a join of
+  the device whose ticket was issued before the kick, by the same generation rule as `webrtc_kick`. `device`
+  must not be empty: a session bound to no device is removed with `webrtc_kick`.
+- A device kick takes the next generation of the user in the room, and the newer of a device kick and an
+  admission decides: kicking a device refuses it **although** the user was admitted from every device before,
+  and admitting the device, or the user from every device, again lets it back in. The kick is kept as long as
+  the admission for every device it overrides.
+- `webrtc_admission` reads what the namespace has on record for that device (`""`: a session bound to no
+  device), judged exactly as a join from it is when the namespace requires admission: `admitted`, else
+  `revoked` or `expired` (neither: never admitted), the user's forced `muted` and `video_muted`, and the
+  admission's end (`expires_at`, 0 when not admitted).
+
+Why the platform takes no application device id of its own: an id a client states proves nothing, so a
+session that named another device's application id would take that device's seat. The session's device id
+cannot be stated, only proved, and the link between it and the application's id is made by the application,
+at the moment it already trusts the device. It costs the platform nothing to look up: an admission is one row
+per device, read by its primary key on the join path.
 
 ### Membership events
 
@@ -569,7 +617,8 @@ resynchronise from the `participants` list of a `welcome`.
 
 ### Kick and mute
 
-Two host functions act on a participant ([Functions](/docs/developer/functions#host-functions-api)):
+These host functions act on a participant ([Functions](/docs/developer/functions#host-functions-api));
+`webrtc_kick_device` is in [Admitting one device](#admitting-one-device):
 
 - `webrtc_kick(room, user)` **revokes** every admission of `user` to `room` and removes their connection:
   every device they are connected from is sent `kicked` and its socket and PeerConnection are closed
@@ -596,8 +645,14 @@ Two host functions act on a participant ([Functions](/docs/developer/functions#h
   admissions, so the user is still muted when they rejoin; `muted = false` resumes it. With no admission on
   record (a namespace that does not require admission, a user it never admitted) the mute lasts as long as
   that connection, plus the window below.
+- `webrtc_mute_video(room, user, muted)` is the same for the user's **video**: every video track they publish,
+  camera and screen alike, is dropped on the server, and the room is told with a forced `participant-state`
+  of `"kind": "video"`. It is recorded on the user's admissions apart from the audio mute, held through a
+  rejoin and logged on the SFUs the same way, and kept for 7 days past an expired admission like the audio
+  mute; neither mute changes the other. When the video is resumed the SFU asks the publisher for a keyframe,
+  so the others see a picture at once rather than at the publisher's next one.
 
-**A mute is logged on the SFU like a kick.** A join ticket carries the mute state the gateway read when it
+**A mute is logged on the SFU like a kick**, the audio and the video in separate logs. A join ticket carries the mute state the gateway read when it
 issued it, a snapshot of at most 30 seconds. Each SFU therefore keeps the latest mute or unmute of a user in a
 room (the request carries the gateway's clock, `at_ms`) for a ticket's life plus the 10 second margin, and a
 join whose ticket was issued at or before that change (plus the margin) takes the logged state instead of

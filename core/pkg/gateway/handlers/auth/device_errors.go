@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	authsvc "github.com/Orama-Network/orama/core/pkg/gateway/auth"
 	"github.com/Orama-Network/orama/core/pkg/logging"
@@ -25,9 +26,13 @@ const (
 	// ErrCodeDeviceProofRequired: a device-bound credential was presented
 	// without the device's proof.
 	ErrCodeDeviceProofRequired = "DEVICE_PROOF_REQUIRED"
-	// ErrCodeDeviceProofInvalid: the proof is stale, reused, or not signed by
-	// the device.
+	// ErrCodeDeviceProofInvalid: the proof is malformed, reused, or not signed
+	// by the device.
 	ErrCodeDeviceProofInvalid = "DEVICE_PROOF_INVALID"
+	// ErrCodeDeviceProofClockSkew: the proof's time is outside the window
+	// around the gateway's clock. The answer's server_time is the gateway's
+	// time, in unix seconds.
+	ErrCodeDeviceProofClockSkew = "DEVICE_PROOF_CLOCK_SKEW"
 	// ErrCodeDeviceRevoked: the device was revoked. Its key is done.
 	ErrCodeDeviceRevoked = "DEVICE_REVOKED"
 	// ErrCodeDevicePending: the device waits for another device's approval.
@@ -71,6 +76,8 @@ var deviceRefusals = []struct {
 		"sign a device proof for this request with the device key and send it as device_proof"}},
 	{authsvc.ErrDeviceProofInvalid, deviceRefusal{http.StatusUnauthorized, ErrCodeDeviceProofInvalid,
 		"make a fresh proof: a new id, the current time, signed by the device key over this request's credential"}},
+	{authsvc.ErrDeviceProofClockSkew, deviceRefusal{http.StatusUnauthorized, ErrCodeDeviceProofClockSkew,
+		"this device's clock is off: stamp the proof's iat on the gateway's clock (server_time here, or any answer's Date header) and sign a new proof"}},
 	{authsvc.ErrDeviceRevoked, deviceRefusal{http.StatusForbidden, ErrCodeDeviceRevoked,
 		"this device key can never sign in again; generate a new key and link it from a device that is still signed in"}},
 	{authsvc.ErrDevicePending, deviceRefusal{http.StatusForbidden, ErrCodeDevicePending,
@@ -102,11 +109,17 @@ func writeDeviceRefusal(w http.ResponseWriter, err error) bool {
 		if candidate.refusal.status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="gateway", charset="UTF-8"`)
 		}
-		writeJSON(w, candidate.refusal.status, map[string]any{
+		body := map[string]any{
 			"error": err.Error(),
 			"code":  candidate.refusal.code,
 			"hint":  candidate.refusal.hint,
-		})
+		}
+		// A proof refused for its time is fixed by the device's clock: the
+		// answer says what this gateway's clock reads.
+		if errors.Is(err, authsvc.ErrDeviceProofClockSkew) {
+			body["server_time"] = time.Now().Unix()
+		}
+		writeJSON(w, candidate.refusal.status, body)
 		return true
 	}
 	return false

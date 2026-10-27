@@ -24,7 +24,7 @@ const generationRetention = 2 * ctrlauth.TicketTTL
 const mutedRetention = 7 * 24 * time.Hour
 
 // AdmissionStore is where a namespace's WebRTC policy and the admissions its
-// functions issued live: the namespace's own database (migrations 073 and 075), read on
+// functions issued live: the namespace's own database (migrations 073, 075 and 095), read on
 // the join path of its gateways. No SFU holds any of it, so it survives an SFU
 // restart and is the same whichever node owns the room.
 type AdmissionStore struct {
@@ -44,14 +44,16 @@ func NewAdmissionStore(db rqlite.Client) *AdmissionStore {
 
 // Admission is what the namespace has on record for one user in one room.
 type Admission struct {
-	// Valid is set when an admission applies to the caller's device and has
-	// neither expired nor been revoked.
+	// Valid is set when an admission applies to the caller's device, has
+	// neither expired nor been revoked, and is not outranked by a newer
+	// revocation of that device (judge).
 	Valid bool
 	// Revoked and Expired explain a refusal; Found is false when the namespace
 	// never admitted this user to this room.
 	Found, Revoked, Expired bool
-	// Muted is set when the namespace has muted this user in this room.
-	Muted bool
+	// Muted and VideoMuted are set when the namespace has muted this user's
+	// audio, or their video, in this room.
+	Muted, VideoMuted bool
 	// ValidUntil is the unix second the latest valid admission ends (0 when
 	// none is valid).
 	ValidUntil int64
@@ -62,11 +64,37 @@ type Admission struct {
 }
 
 type admissionRow struct {
-	DeviceID  string `db:"device_id"`
-	ExpiresAt int64  `db:"expires_at"`
-	RevokedAt int64  `db:"revoked_at"`
-	Muted     int    `db:"muted"`
-	Gen       int64  `db:"generation"`
+	DeviceID   string `db:"device_id"`
+	ExpiresAt  int64  `db:"expires_at"`
+	RevokedAt  int64  `db:"revoked_at"`
+	Muted      int    `db:"muted"`
+	VideoMuted int    `db:"video_muted"`
+	Gen        int64  `db:"generation"`
+}
+
+// Media is what a mute stops the forwarding of: a user's audio, or their
+// video (camera and screen).
+type Media int
+
+const (
+	MediaAudio Media = iota
+	MediaVideo
+)
+
+// column is where the mute of m is recorded. It is one of two constants, never
+// a value a caller supplies, so it is safe to build a statement with.
+func (m Media) column() string {
+	if m == MediaVideo {
+		return "video_muted"
+	}
+	return "muted"
+}
+
+func (m Media) String() string {
+	if m == MediaVideo {
+		return "video"
+	}
+	return "audio"
 }
 
 // RequireAdmission reports whether the namespace admits only users its
@@ -110,7 +138,7 @@ func (s *AdmissionStore) Lookup(ctx context.Context, namespace, room, user, devi
 		return Admission{}, err
 	}
 	var rows []admissionRow
-	err := s.db.Query(ctx, &rows, `SELECT device_id, expires_at, COALESCE(revoked_at, 0) AS revoked_at, muted, generation
+	err := s.db.Query(ctx, &rows, `SELECT device_id, expires_at, COALESCE(revoked_at, 0) AS revoked_at, muted, video_muted, generation
 		FROM webrtc_admissions
 		WHERE namespace = ? AND room = ? AND user_id = ? AND device_id IN (?, '')`,
 		namespace, room, user, device)
@@ -125,19 +153,32 @@ func (s *AdmissionStore) Lookup(ctx context.Context, namespace, room, user, devi
 // three as bound parameters, after the statement's own.
 const nextGeneration = `(SELECT COALESCE(MAX(generation), 0) + 1 FROM webrtc_admissions WHERE namespace = ? AND room = ? AND user_id = ?)`
 
-// judge picks the verdict over the rows that apply: any valid one admits.
+// judge picks the verdict over the rows that apply (the device's own and the
+// one for every device): a valid one admits, unless a revocation of a newer
+// generation outranks it. Every admit and every device kick takes the next
+// generation, so the newer of the two decisions wins: a kick of the device
+// refuses it although the user is admitted from every device, and admitting the
+// user from every device again (or the device again) lets it back in. Rows that
+// predate generations are all 0, and none outranks another.
 func judge(rows []admissionRow, now int64) Admission {
 	var a Admission
+	var newestRevoked int64
+	for _, r := range rows {
+		if r.RevokedAt != 0 && r.Gen > newestRevoked {
+			newestRevoked = r.Gen
+		}
+	}
 	for _, r := range rows {
 		a.Found = true
-		if r.Muted != 0 {
-			a.Muted = true
-		}
+		a.Muted = a.Muted || r.Muted != 0
+		a.VideoMuted = a.VideoMuted || r.VideoMuted != 0
 		switch {
 		case r.RevokedAt != 0:
 			a.Revoked = true
 		case r.ExpiresAt <= now:
 			a.Expired = true
+		case r.Gen < newestRevoked:
+			a.Revoked = true
 		default:
 			a.Valid = true
 			if r.ExpiresAt > a.ValidUntil {
@@ -156,8 +197,9 @@ func judge(rows []admissionRow, now int64) Admission {
 // a mute on record stays. Admissions that expired are removed here, so the table
 // holds what is live, except that an admission is kept for generationRetention
 // after it ends (expired or revoked: removing it sooner would restart the
-// user's generation count) and a muted one for mutedRetention after it expires
-// (removing it sooner would unmute the user on their next admission).
+// user's generation count) and a muted one, audio or video, for mutedRetention
+// after it expires (removing it sooner would unmute the user on their next
+// admission).
 //
 // Every admission takes the next generation of its user in its room, whatever
 // the device, in the same statement that writes it.
@@ -168,7 +210,7 @@ func (s *AdmissionStore) Admit(ctx context.Context, namespace, room, user, devic
 	now := s.now()
 	expires := now.Add(ttl)
 	if _, err := s.db.Exec(ctx, `DELETE FROM webrtc_admissions WHERE namespace = ?
-		AND MAX(expires_at, COALESCE(revoked_at, 0)) <= ? AND (muted = 0 OR expires_at <= ?)`,
+		AND MAX(expires_at, COALESCE(revoked_at, 0)) <= ? AND ((muted = 0 AND video_muted = 0) OR expires_at <= ?)`,
 		namespace, now.Add(-generationRetention).Unix(), now.Add(-mutedRetention).Unix()); err != nil {
 		return time.Time{}, fmt.Errorf("failed to remove expired WebRTC admissions of namespace %q: %w", namespace, err)
 	}
@@ -197,16 +239,47 @@ func (s *AdmissionStore) Revoke(ctx context.Context, namespace, room, user strin
 	if err != nil {
 		return 0, fmt.Errorf("failed to revoke the WebRTC admissions of %q in room %q: %w", user, room, err)
 	}
-	// The highest generation the user holds in the room, revoked or not. An
-	// admission made between the UPDATE and this read can only raise it, which
-	// refuses that admission's tickets until the next one: a false refusal,
-	// never a ticket this kick should have stopped let through. Reading only
-	// revoked rows could miss the generation the UPDATE revoked, when a re-admit
-	// rewrote that row in between.
+	return s.newestGeneration(ctx, namespace, room, user)
+}
+
+// RevokeDevice ends the admission of one device of user to room, and refuses
+// that device although an admission for every device of the user is valid: the
+// device's row is marked revoked (written when it has none) and takes the next
+// generation, which outranks every admission made before it (judge). The row is
+// kept at least as long as the admission for every device it outranks, so the
+// purge cannot let the device back in. The user's other devices keep their
+// admissions. It returns the generation the SFUs refuse the device's tickets up
+// to, as Revoke does.
+func (s *AdmissionStore) RevokeDevice(ctx context.Context, namespace, room, user, device string) (int64, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return 0, err
+	}
+	now := s.now().Unix()
+	ofUser := `FROM webrtc_admissions WHERE namespace = ? AND room = ? AND user_id = ?`
+	_, err := s.db.Exec(ctx, `INSERT INTO webrtc_admissions (namespace, room, user_id, device_id, expires_at, revoked_at, muted, video_muted, created_at, generation)
+		VALUES (?, ?, ?, ?, MAX(?, (SELECT COALESCE(MAX(expires_at), 0) `+ofUser+` AND device_id = '')), ?,
+		(SELECT COALESCE(MAX(muted), 0) `+ofUser+`), (SELECT COALESCE(MAX(video_muted), 0) `+ofUser+`), ?, `+nextGeneration+`)
+		ON CONFLICT(namespace, room, user_id, device_id) DO UPDATE SET revoked_at = excluded.revoked_at,
+		generation = excluded.generation, expires_at = MAX(webrtc_admissions.expires_at, excluded.expires_at)`,
+		namespace, room, user, device, now, namespace, room, user, now,
+		namespace, room, user, namespace, room, user, now, namespace, room, user)
+	if err != nil {
+		return 0, fmt.Errorf("failed to revoke the WebRTC admission of device %q of %q in room %q: %w", device, user, room, err)
+	}
+	return s.newestGeneration(ctx, namespace, room, user)
+}
+
+// newestGeneration is the highest generation the user holds in the room,
+// revoked or not: what a kick tells the SFUs. An admission made between the
+// revocation and this read can only raise it, which refuses that admission's
+// tickets until the next one: a false refusal, never a ticket the kick should
+// have stopped let through. Reading only revoked rows could miss the generation
+// the revocation wrote, when a re-admit rewrote that row in between.
+func (s *AdmissionStore) newestGeneration(ctx context.Context, namespace, room, user string) (int64, error) {
 	var rows []struct {
 		Gen int64 `db:"gen"`
 	}
-	err = s.db.Query(ctx, &rows, `SELECT COALESCE(MAX(generation), 0) AS gen FROM webrtc_admissions
+	err := s.db.Query(ctx, &rows, `SELECT COALESCE(MAX(generation), 0) AS gen FROM webrtc_admissions
 		WHERE namespace = ? AND room = ? AND user_id = ?`, namespace, room, user)
 	if err != nil {
 		return 0, fmt.Errorf("failed to read the revoked generation of %q in room %q: %w", user, room, err)
@@ -217,10 +290,10 @@ func (s *AdmissionStore) Revoke(ctx context.Context, namespace, room, user strin
 	return rows[0].Gen, nil
 }
 
-// SetMuted records the mute on every admission of user to room, so it holds
-// when they rejoin. With no admission on record there is nothing to keep it on:
-// the mute then lasts as long as the peer's connection.
-func (s *AdmissionStore) SetMuted(ctx context.Context, namespace, room, user string, muted bool) error {
+// SetMuted records the mute of m on every admission of user to room, so it
+// holds when they rejoin. With no admission on record there is nothing to keep
+// it on: the mute then lasts as long as the peer's connection.
+func (s *AdmissionStore) SetMuted(ctx context.Context, namespace, room, user string, m Media, muted bool) error {
 	if err := s.ensureSchema(ctx); err != nil {
 		return err
 	}
@@ -228,10 +301,10 @@ func (s *AdmissionStore) SetMuted(ctx context.Context, namespace, room, user str
 	if muted {
 		flag = 1
 	}
-	_, err := s.db.Exec(ctx, `UPDATE webrtc_admissions SET muted = ? WHERE namespace = ? AND room = ? AND user_id = ?`,
+	_, err := s.db.Exec(ctx, `UPDATE webrtc_admissions SET `+m.column()+` = ? WHERE namespace = ? AND room = ? AND user_id = ?`,
 		flag, namespace, room, user)
 	if err != nil {
-		return fmt.Errorf("failed to record the mute of %q in room %q: %w", user, room, err)
+		return fmt.Errorf("failed to record the %s mute of %q in room %q: %w", m, user, room, err)
 	}
 	return nil
 }

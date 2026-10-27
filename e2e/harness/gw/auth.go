@@ -169,6 +169,30 @@ func (c *Client) Logout(ctx context.Context, accessToken, refreshToken, namespac
 	return c.JSON(ctx, http.MethodPost, PathLogout, accessToken, body, nil)
 }
 
+// LogoutAll ends every session of the wallet from a session bound to a
+// device, with that device's logout-all proof (nil sends none).
+func (c *Client) LogoutAll(ctx context.Context, accessToken, refreshToken, namespace string, proof *wallet.Proof) (*Response, error) {
+	body := map[string]any{"refresh_token": refreshToken, "namespace": namespace, "all": true}
+	if proof != nil {
+		body["device_proof"] = proof
+	}
+	return c.JSON(ctx, http.MethodPost, PathLogout, accessToken, body, nil)
+}
+
+// LogoutEverywhere ends every session of the wallet whose session s is: with
+// the device's logout-all proof when s is bound to device, which the gateway
+// requires, and without one when device is nil.
+func (c *Client) LogoutEverywhere(ctx context.Context, s *Session, namespace string, device *wallet.Device) (*Response, error) {
+	if device == nil {
+		return c.Logout(ctx, s.AccessToken, s.RefreshToken, namespace, true)
+	}
+	proof, err := device.NewProof(wallet.ProofLogoutAll, namespace, device.ID())
+	if err != nil {
+		return nil, err
+	}
+	return c.LogoutAll(ctx, s.AccessToken, s.RefreshToken, namespace, proof)
+}
+
 // Whoami returns the caller as the gateway sees it.
 func (c *Client) Whoami(ctx context.Context, token string) (map[string]any, *Response, error) {
 	var out map[string]any

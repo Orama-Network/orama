@@ -14,9 +14,11 @@ crate-type = ["staticlib", "rlib"]
 # Upstream Zcash Orchard with the Ironwood pool. No fork, no ZSA. Exact pins: a proof
 # verifier must not move under a `cargo update`.
 orchard = { version = "=0.15.5", features = ["circuit"] }
-# Canonical v6 (Ironwood) bundle wire encoding, read exactly as Zcash reads it.
-zcash_primitives = { version = "=0.30.1", default-features = false, features = ["std"] }
+# The bundle's value-balance type (ZatBalance, range-checked to ±MAX_MONEY). The v6 bundle encoding
+# itself is read by src/wire.rs, not by zcash_primitives: see that file for why.
 zcash_protocol = "=0.10.6"
+# The non-empty action list orchard's Bundle is built from; the version orchard 0.15.5 uses.
+nonempty = { version = "=0.11.0", default-features = false }
 # The note-commitment tree frontier the chain keeps (Sinsemilla hashing lives only in Rust).
 incrementalmerkletree = "=0.8.2"
 
@@ -24,3 +26,6 @@ incrementalmerkletree = "=0.8.2"
 # Test-vector tooling only. The node never proves.
 rand = "0.8"
 sha2 = "0.10"
+# The reader src/wire.rs replaced, and the writer the vector generators encode with. Tests and
+# examples only: tests/wire.rs holds the in-house reader to it byte for byte.
+zcash_primitives = { version = "=0.30.1", default-features = false, features = ["std"] }

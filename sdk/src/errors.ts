@@ -47,6 +47,12 @@ export class SDKError extends Error {
     const code = envelope?.code || body?.code || `HTTP_${status}`;
     const details = envelope ?? (body && typeof body === "object" ? body : {});
 
+    // An attestation refusal is about the device and the app, whatever its
+    // status: a 403 ATTESTATION_INVALID is not a missing grant, and a 401
+    // ATTESTATION_CHALLENGE_INVALID is not a bad credential.
+    if (ATTESTATION_CODES.has(code)) {
+      return new AttestationError(errorMsg, status, code, details);
+    }
     if (status === 401) {
       if (code === AuthCode.Revoked) {
         return new RevokedCredentialError(errorMsg, status, code, details);
@@ -170,8 +176,17 @@ export const AuthCode = {
   DeviceSignatureInvalid: "DEVICE_SIGNATURE_INVALID",
   /** A device-bound credential was sent without the device's proof. */
   DeviceProofRequired: "DEVICE_PROOF_REQUIRED",
-  /** The device proof is stale, reused, or not the device's. Make a fresh one. */
+  /** The device proof is malformed, reused, or not the device's. Make a fresh one. */
   DeviceProofInvalid: "DEVICE_PROOF_INVALID",
+  /**
+   * The device proof's time is outside the window around the gateway's clock:
+   * this device's clock is off. `details.server_time` is the gateway's clock
+   * (unix seconds). The SDK stamps its proofs on the gateway's clock and makes
+   * a refused one again on it, so an application sees this only when the
+   * clock moves again between the two; tell the user their clock is wrong
+   * rather than signing them out.
+   */
+  DeviceProofClockSkew: "DEVICE_PROOF_CLOCK_SKEW",
   /** The device was revoked; its key can never hold a session again. */
   DeviceRevoked: "DEVICE_REVOKED",
   /** The device waits for another of the account's devices to approve it. */
@@ -209,9 +224,54 @@ export const AuthCode = {
   AttestationInvalid: "ATTESTATION_INVALID",
   /** The build is older than the namespace admits: update the app. */
   AppUpdateRequired: "APP_UPDATE_REQUIRED",
+  /** The attestation challenge was never issued to this device, was already used, or expired. Ask for a new one. */
+  AttestationChallengeInvalid: "ATTESTATION_CHALLENGE_INVALID",
+  /** The namespace's attestation mode is off: there is no app to attest against. */
+  AttestationNotConfigured: "ATTESTATION_NOT_CONFIGURED",
+  /** The session is bound to no device, or the caller is a key: an attestation is bound to a device. */
+  AttestationNeedsDevice: "ATTESTATION_NEEDS_DEVICE",
+  /** The attestation request is not one the route reads (fields, base64, chain length, size). */
+  AttestationMalformed: "ATTESTATION_MALFORMED",
+  /** The device holds as many unanswered challenges as it may. Answer one, or wait for them to expire. */
+  AttestationChallengeLimit: "ATTESTATION_CHALLENGE_LIMIT",
+  /** An attestation policy that cannot be enforced as written (a namespace operator's PUT). */
+  AttestationPolicyInvalid: "ATTESTATION_POLICY_INVALID",
 } as const;
 
 export type AuthCode = (typeof AuthCode)[keyof typeof AuthCode];
+
+/** The codes an `AttestationError` carries. */
+const ATTESTATION_CODES = new Set<string>([
+  AuthCode.AttestationRequired,
+  AuthCode.AttestationInvalid,
+  AuthCode.AppUpdateRequired,
+  AuthCode.AttestationChallengeInvalid,
+  AuthCode.AttestationNotConfigured,
+  AuthCode.AttestationNeedsDevice,
+  AuthCode.AttestationMalformed,
+  AuthCode.AttestationChallengeLimit,
+  AuthCode.AttestationPolicyInvalid,
+]);
+
+/**
+ * The namespace admits only its own app on an attested device, and this
+ * refusal is about that: the device has not attested (`ATTESTATION_REQUIRED`),
+ * its proof was refused (`ATTESTATION_INVALID`), the build is too old
+ * (`APP_UPDATE_REQUIRED`), or an attest call could not be served (the
+ * challenge, the device, the request, the namespace's mode). Switch on `code`
+ * against `AuthCode`.
+ */
+export class AttestationError extends SDKError {
+  constructor(
+    message: string,
+    httpStatus: number = 403,
+    code: string = AuthCode.AttestationRequired,
+    details: Record<string, any> = {}
+  ) {
+    super(message, httpStatus, code, details);
+    this.name = "AttestationError";
+  }
+}
 
 /**
  * The credential was missing, malformed, expired, or is not enough on its own.

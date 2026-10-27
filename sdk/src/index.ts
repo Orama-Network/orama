@@ -72,8 +72,6 @@ export function createClient(config: ClientConfig): Client {
   };
 }
 
-export { createWorkloadClient } from "./workload";
-export type { WorkloadClientConfig } from "./workload";
 export { HttpClient } from "./core/http";
 export type { NetworkErrorCallback, NetworkErrorContext } from "./core/http";
 export { WSClient } from "./core/ws";
@@ -101,6 +99,7 @@ export {
   RelayError,
   FetchCapError,
   LogoutError,
+  AttestationError,
   RelayCode,
 } from "./errors";
 export { DirectFetch } from "./storage/fetch-transport";
@@ -108,7 +107,16 @@ export type { FetchCapability, FetchOptions, FetchTransport } from "./storage/fe
 export { SCOPES, DATA_PLANE_SCOPES, KEY_PROFILES, PROFILE_SCOPES, ROLES, GRANTABLE_ROLES, isScope, satisfiesScope } from "./scopes";
 export type { Scope, KeyProfile, Role } from "./scopes";
 export type { RequestOptions, TokenRefresher, KeyExchanger } from "./core/http";
-export type { LogoutOptions } from "./auth/client";
+export type { LogoutOptions, AttestedSession } from "./auth/client";
+export { attestationBinding } from "./auth/attestation";
+export type {
+  AttestationChallenge,
+  AttestationResult,
+  IOSAttestation,
+  AndroidAttestation,
+  AppAttestAssertionRequest,
+  AppAttestAssertionProvider,
+} from "./auth/attestation";
 export { deviceIdOf, deviceProofMessage, makeDeviceProof, normalizeUserCode } from "./auth/device";
 export type {
   DeviceSigner,

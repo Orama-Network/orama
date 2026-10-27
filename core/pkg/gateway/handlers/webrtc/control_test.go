@@ -18,15 +18,17 @@ import (
 	"github.com/Orama-Network/orama/core/pkg/sfu/ctrlauth"
 )
 
-// controlSFU is an SFU that answers health and the two control routes, checking
+// controlSFU is an SFU that answers health and the control routes, checking
 // the MAC the way the real one does and recording what it was asked.
 type controlSFU struct {
-	node   SFUNode
-	srv    *httptest.Server
-	mu     sync.Mutex
-	kicks  []ctrlauth.KickRequest
-	mutes  []ctrlauth.MuteRequest
-	status int
+	node        SFUNode
+	srv         *httptest.Server
+	mu          sync.Mutex
+	kicks       []ctrlauth.KickRequest
+	deviceKicks []ctrlauth.KickRequest
+	mutes       []ctrlauth.MuteRequest
+	videoMutes  []ctrlauth.MuteRequest
+	status      int
 }
 
 func newControlSFU(t *testing.T, id string) *controlSFU {
@@ -64,6 +66,16 @@ func newControlSFU(t *testing.T, id string) *controlSFU {
 		var r ctrlauth.MuteRequest
 		_ = json.Unmarshal(b, &r)
 		f.mutes = append(f.mutes, r)
+	})
+	control(ctrlauth.KickDevicePath, func(b []byte) {
+		var r ctrlauth.KickRequest
+		_ = json.Unmarshal(b, &r)
+		f.deviceKicks = append(f.deviceKicks, r)
+	})
+	control(ctrlauth.VideoMutePath, func(b []byte) {
+		var r ctrlauth.MuteRequest
+		_ = json.Unmarshal(b, &r)
+		f.videoMutes = append(f.videoMutes, r)
 	})
 	srv := httptest.NewServer(mux)
 	f.srv = srv

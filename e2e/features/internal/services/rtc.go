@@ -32,8 +32,10 @@ const (
 	MsgRefreshCreds   = "refresh-credentials"
 	MsgServerDraining = "server-draining"
 	MsgError          = "error"
-	// MsgParticipantJoined tells the room a peer joined, named as the welcome names it.
+	// MsgParticipantJoined tells the room a peer joined, named as the welcome
+	// names it; MsgParticipantLeft that one left.
 	MsgParticipantJoined = "participant-joined"
+	MsgParticipantLeft   = "participant-left"
 	// Participant state and moderation (website/src/docs/developer/webrtc.mdx#audio-and-video-state,
 	// #kick-and-mute).
 	MsgAudioState       = "audio-state"
@@ -68,7 +70,9 @@ type RTCPeer struct {
 	pc       *webrtc.PeerConnection
 	track    *webrtc.TrackLocalStaticRTP
 	received atomic.Int64
-	seq      uint16
+	// receivedVideo counts the RTP packets of video tracks among received.
+	receivedVideo atomic.Int64
+	seq           uint16
 	// video publishing and keyframe feedback (rtc_video.go)
 	videoTrack *webrtc.TrackLocalStaticRTP
 	videoSeq   uint16
@@ -181,7 +185,8 @@ func (p *RTCPeer) Start(publish bool) error {
 		}
 	})
 	pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		if tr.Kind() == webrtc.RTPCodecTypeVideo {
+		video := tr.Kind() == webrtc.RTPCodecTypeVideo
+		if video {
 			p.videoSSRC.Store(uint32(tr.SSRC()))
 		}
 		for {
@@ -189,16 +194,23 @@ func (p *RTCPeer) Start(publish bool) error {
 				return
 			}
 			p.received.Add(1)
+			if video {
+				p.receivedVideo.Add(1)
+			}
 		}
 	})
 	go p.loop()
 	if !publish {
 		return nil
 	}
-	return p.publishTrack()
+	if err := p.addAudio(); err != nil {
+		return err
+	}
+	return p.sendOffer()
 }
 
-func (p *RTCPeer) publishTrack() error {
+// addAudio adds an Opus track to the peer's connection, for its next offer.
+func (p *RTCPeer) addAudio() error {
 	track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, "audio", "e2e-"+p.PeerID)
 	if err != nil {
 		return fmt.Errorf("create the track: %w", err)
@@ -207,7 +219,7 @@ func (p *RTCPeer) publishTrack() error {
 		return fmt.Errorf("add the track: %w", err)
 	}
 	p.track = track
-	return p.sendOffer()
+	return nil
 }
 
 // sendOffer makes the peer's own offer and sends it.
@@ -283,6 +295,11 @@ func (p *RTCPeer) Publish() error {
 
 // Received is how many RTP packets arrived from the room.
 func (p *RTCPeer) Received() int64 { return p.received.Load() }
+
+// ReceivedVideo and ReceivedAudio split Received by the kind of track the
+// packets arrived on.
+func (p *RTCPeer) ReceivedVideo() int64 { return p.receivedVideo.Load() }
+func (p *RTCPeer) ReceivedAudio() int64 { return p.received.Load() - p.receivedVideo.Load() }
 
 // Connected reports whether ICE reached connected through a relay.
 func (p *RTCPeer) Connected() bool {

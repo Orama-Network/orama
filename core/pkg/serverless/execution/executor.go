@@ -16,11 +16,14 @@ import (
 )
 
 // InstantiateTiming captures how long the per-invocation wazero
-// InstantiateModule call took (running TinyGo _start / package init). It rides
-// the ctx so the engine's slow-invoke diagnostic can split the execute phase
-// into cold-start (instantiate) vs handler work (run) — the distinction that
-// pins the bugboard #27 cold-start floor. Nil collector = not measured.
+// InstantiateModule call took (running TinyGo _start / package init), and how
+// long the call waited for an execution slot before it. It rides the ctx so
+// the engine can split the execute phase into slot wait, cold-start
+// (instantiate) and handler work (run) — the distinction that pins the
+// bugboard #27 cold-start floor, and tells a burst queued on the namespace's
+// slots from a slow handler (bug-963). Nil collector = not measured.
 type InstantiateTiming struct {
+	QueueNs       int64
 	InstantiateNs int64
 }
 
@@ -63,14 +66,23 @@ type Executor struct {
 
 // NewExecutor creates a new Executor.
 // maxConcurrent limits simultaneous module instantiations (0 = unlimited).
-func NewExecutor(runtime wazero.Runtime, logger *zap.Logger, maxConcurrent int) *Executor {
+// perNamespace caps one namespace's share of them; 0 means half of
+// maxConcurrent (at least 1), the split a gateway running several namespaces
+// needs. A value above maxConcurrent is clamped to it.
+func NewExecutor(runtime wazero.Runtime, logger *zap.Logger, maxConcurrent, perNamespace int) *Executor {
 	var sem chan struct{}
 	perNSN := 0
 	if maxConcurrent > 0 {
 		sem = make(chan struct{}, maxConcurrent)
-		perNSN = maxConcurrent / 2
+		perNSN = perNamespace
+		if perNSN <= 0 {
+			perNSN = maxConcurrent / 2
+		}
 		if perNSN < 1 {
 			perNSN = 1
+		}
+		if perNSN > maxConcurrent {
+			perNSN = maxConcurrent
 		}
 	}
 	return &Executor{
@@ -193,7 +205,11 @@ func (e *Executor) ExecuteModule(ctx context.Context, compiled wazero.CompiledMo
 		ctx = experimental.WithMemoryAllocator(ctx, cappedAllocator{limitBytes: uint64(limitMB) * bytesPerMB, startRefused: &startRefused})
 	}
 
+	queueStart := time.Now()
 	release, err := e.acquire(ctx, namespaceFrom(ctx))
+	if t := instantiateTimingFrom(ctx); t != nil {
+		t.QueueNs = time.Since(queueStart).Nanoseconds()
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -124,7 +124,7 @@ func TestControl_refusesWhatItCannotAuthenticate(t *testing.T) {
 		})
 	}
 	// None of them recorded a kick.
-	if s.kicks.refuses("r1", "alice", 0, 0) {
+	if s.kicks.refuses("r1", "alice", "", 0, 0) {
 		t.Error("an unauthenticated request left a kick on record")
 	}
 }

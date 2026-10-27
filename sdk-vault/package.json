@@ -1,6 +1,6 @@
 {
   "name": "@orama-network/orama-vault",
-  "version": "0.3.8",
+  "version": "0.3.11",
   "description": "Client for the Orama Network vault guardians — Shamir-split secret storage for operators and RootWallet",
   "type": "module",
   "main": "./dist/index.cjs",

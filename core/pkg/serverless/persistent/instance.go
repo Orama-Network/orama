@@ -349,7 +349,15 @@ func (i *Instance) Submit(frame []byte) error {
 // Run drains the inbound channel, invoking ws_frame per message. Blocks
 // until ctx is cancelled, Close is called, or a frame returns "close".
 //
-// Frames are processed serially — wazero instances are not goroutine-safe.
+// Frames are processed serially, in arrival order, and that is the contract
+// the functions docs give apps (bug-963): wazero instances are not
+// goroutine-safe, and wazero cannot set a call aside while it waits in a host
+// function, so a frame blocked in function_invoke or a database read holds
+// every later frame of the socket. One instance per socket is also what makes
+// the function's memory its per-connection state. Concurrency is the
+// function's to ask for: function_invoke_async returns at once and runs the
+// target in the namespace's execution slots, which bound it per gateway rather
+// than per socket.
 func (i *Instance) Run(ctx context.Context) {
 	i.runStarted.Store(true)
 	// Signalled on every exit path so Close never waits on a loop that has

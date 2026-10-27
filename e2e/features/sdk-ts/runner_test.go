@@ -37,9 +37,12 @@ const (
 	// The TypeScript tests' credential calls are not paced by the harness
 	// (they are the SDK's own fetches), so their tokens are drawn up front:
 	// verify, refresh and a replayed verify on the public gateway; refresh,
-	// the device link start and claim on the namespace gateway.
+	// the device link start and claim on the namespace gateway, and the
+	// device-bound session's two refreshes on a skewed clock, each refused
+	// once for its time and sent again, its refreshes before attesting, with
+	// an App Attest assertion, and before logging out everywhere.
 	mainCredentialCalls = 4
-	nsCredentialCalls   = 4
+	nsCredentialCalls   = 11
 )
 
 // tools finds node and pnpm; without them the suite cannot run here.
@@ -128,6 +131,11 @@ func suiteEnv(t *testing.T, f *fleet.Fleet, n *ns.Namespace) []string {
 		t.Fatal(err)
 	}
 	member, wsUser, endedUser := tenancy.Member(t, n, "admin"), tenancy.Member(t, n, "admin"), tenancy.Member(t, n, "admin")
+	deviceUser := tenancy.DeviceMember(t, n, "admin")
+	deviceJWK, err := deviceUser.Device.PrivateJWK()
+	if err != nil {
+		t.Fatal(err)
+	}
 	w, msg, sig := lobbySignIn(t)
 	env := []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "LANG=C.UTF-8", "CI=1",
@@ -140,6 +148,10 @@ func suiteEnv(t *testing.T, f *fleet.Fleet, n *ns.Namespace) []string {
 		// The SDK's own auth test logs a session out: a session of its own, or
 		// it would revoke the owner's GATEWAY_JWT every later test uses.
 		"E2E_LOGOUT_JWT=" + endedUser.Token(), "E2E_LOGOUT_REFRESH=" + endedUser.Session.RefreshToken,
+		// A session bound to a device, and the device's private key, for the
+		// SDK's device proofs on a skewed clock and its logout everywhere.
+		"E2E_DEVICE_REFRESH=" + deviceUser.Session.RefreshToken, "E2E_DEVICE_ID=" + deviceUser.Device.ID(),
+		"E2E_DEVICE_JWK=" + string(deviceJWK),
 	}
 	if f.State.ChainID != "" {
 		env = append(env, "E2E_CHAIN=1")

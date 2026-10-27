@@ -15,7 +15,10 @@
 # transactions, a transaction's query reading its own writes, the
 # linearizable batch read,
 # ephemeral state limits, TTL and disconnect), the socket registry, cron
-# fired once per slot across gateways, and the pubsub depth limit.
+# fired once per slot across gateways, the pubsub depth limit, and (bug-963)
+# a persistent socket's frame order against function_invoke_async
+# (testdata/wsrouter), where an invocation record says its duration went,
+# and a deploy's first call on every gateway reading compiled code.
 # Needs tinygo on the runner's PATH (otherwise not applicable, not covered).
 # anon_fetch with Tor down is in anon-tor-chaos.
 id: serverless
@@ -89,3 +92,6 @@ covers:
     - "docs/whitepaper/technical-reference/appendices/d-cli-reference.md#orama-function-triggers: cron triggers fire once per scheduled run across the namespace's gateways"
     - "website/src/docs/developer/functions.mdx#context: get_caller_device_id is the session's device thumbprint"
     - "docs/whitepaper/technical-reference/vol1/18-cache.md#what-each-attacker-can-do: WASM concurrency has a per-namespace slot"
+    - "website/src/docs/developer/functions.mdx#frame-order-on-a-persistent-socket: the frames of one persistent socket run one at a time in arrival order, so ops run with function_invoke answer in order after their sum; the same ops handed to function_invoke_async overlap and the last answers well before it"
+    - "website/src/docs/developer/functions.mdx#invocation-logging: every invocation record names the node that ran it and its database calls, with queue, load and database time inside the duration"
+    - "website/src/docs/developer/functions.mdx#invocation-logging: a namespace gateway compiles a deployed function ahead of its first call, so that call on every gateway loads it in milliseconds"

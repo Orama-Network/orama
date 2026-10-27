@@ -78,7 +78,7 @@ func runGrowProbe(t *testing.T, minPages, growPages uint32, limitMB int) error {
 	}
 	defer compiled.Close(ctx)
 
-	ex := NewExecutor(runtime, zap.NewNop(), 0)
+	ex := NewExecutor(runtime, zap.NewNop(), 0, 0)
 	_, err = ex.ExecuteModule(WithMemoryLimitMB(ctx, limitMB), compiled, "probe", nil)
 	return err
 }
@@ -155,7 +155,7 @@ func TestExecuteModule_hiddenMemoryAboveLimitIsAnErrorNotAPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	ex := NewExecutor(runtime, zap.NewNop(), 0)
+	ex := NewExecutor(runtime, zap.NewNop(), 0, 0)
 	_, err = ex.ExecuteModule(WithMemoryLimitMB(ctx, 1), compiled, "hidden", nil)
 	if err == nil || !strings.Contains(err.Error(), "memory limit of 1 MB") {
 		t.Fatalf("a hidden 4 MB memory under a 1 MB limit answered %v, want the limit refusal", err)

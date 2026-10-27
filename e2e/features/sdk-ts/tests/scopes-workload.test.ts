@@ -1,6 +1,11 @@
 // The SDK's scope constants against the live gateway, and the workload
-// client's refusals outside a deployment.
-import { KEY_PROFILES, PROFILE_SCOPES, SDKError, createWorkloadClient, isScope } from "../../../../sdk/src/index";
+// client's refusals outside a deployment, from its own entry
+// (@orama-network/orama/workload) and its default Node token reader.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { KEY_PROFILES, PROFILE_SCOPES, SDKError, isScope } from "../../../../sdk/src/index";
+import { createWorkloadClient } from "../../../../sdk/src/workload";
 import { http, need, nsURL, onFleet } from "./fleet";
 
 interface MintedKey {
@@ -59,5 +64,19 @@ describe.skipIf(!onFleet)("sdk scopes and workload", () => {
     }
     const who = await client.auth.whoami();
     expect(who.authenticated).toBe(false);
+  });
+
+  it("the workload entry reads its token file from disk by default, and a forged token cannot reach the gateway", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "e2e-workload-"));
+    try {
+      const tokenFile = join(dir, "token");
+      writeFileSync(tokenFile, "e2e.forged.workload-token\n");
+      const client = await createWorkloadClient({ baseURL: nsURL(), tokenFile });
+      expect(client.auth.getToken()).toBe("e2e.forged.workload-token");
+      const who = await client.auth.whoami();
+      expect(who.authenticated).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

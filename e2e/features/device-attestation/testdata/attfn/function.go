@@ -1,7 +1,8 @@
 // Command function is the device-attestation fixture: TinyGo, WASI,
 // stateless. It answers with what the gateway says about the caller's device
-// attestation (get_caller_attestation), so a test sees both that the request
-// reached the function and what the function was told.
+// attestation (get_caller_attestation) and its verdict on it under the
+// namespace's policy (get_caller_attestation_verdict), so a test sees both
+// that the request reached the function and what the function was told.
 package main
 
 import (
@@ -13,8 +14,14 @@ import (
 //go:wasmimport env get_caller_attestation
 func getCallerAttestation() uint64
 
+//go:wasmimport env get_caller_attestation_verdict
+func getCallerAttestationVerdict() uint64
+
 func main() {
-	out, err := json.Marshal(map[string]string{"attestation": unpack(getCallerAttestation())})
+	out, err := json.Marshal(map[string]string{
+		"attestation": unpack(getCallerAttestation()),
+		"verdict":     unpack(getCallerAttestationVerdict()),
+	})
 	if err != nil {
 		out = []byte(`{"error":"encode reply"}`)
 	}

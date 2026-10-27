@@ -100,7 +100,7 @@ func (u *User) logout(t testing.TB) {
 	u.mu.Lock()
 	s := u.s
 	u.mu.Unlock()
-	resp, err := u.c.Logout(ctx, s.AccessToken, s.RefreshToken, u.ns, true)
+	resp, err := u.c.LogoutEverywhere(ctx, s, u.ns, u.Device)
 	if err != nil && (resp == nil || resp.Status != http.StatusUnauthorized) {
 		t.Errorf("cleanup: logging %s out: %v", u.Wallet.Address(), err)
 	}

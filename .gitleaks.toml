@@ -11,8 +11,9 @@ title = "orama secret-scan allowlist"
 useDefault = true
 
 [[allowlists]]
-description = "Test vectors and key fixtures: deterministic keys and signatures that verify code, generated for the tests and worth nothing, and Google's published Android key-attestation samples (their verifiedBootKey is a public boot-key hash)"
+description = "Test vectors and key fixtures: deterministic keys and signatures that verify code, generated for the tests and worth nothing, Google's published Android key-attestation samples (their verifiedBootKey is a public boot-key hash), and the RFC 8032 Ed25519 vectors upstream cosmwasm-crypto ships"
 paths = [
+  '''(^|/)chain/native/patches/cosmwasm-crypto/testdata/ed25519_tests\.json$''',
   '''(^|/)chain/client/tx/testdata/tx_vectors\.json$''',
   '''(^|/)chain/x/shielded/wallet/testdata/keys/keys\.json$''',
   '''(^|/)contracts/enrollment/seal\.json$''',

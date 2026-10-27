@@ -43,9 +43,10 @@ type Server struct {
 	controlKey []byte
 	// kicks remembers recent kicks so a join already in flight is refused.
 	kicks *kickLog
-	// mutes remembers recent mutes so a join with a stale ticket takes the
-	// current state.
-	mutes *muteLog
+	// mutes and videoMutes remember recent mutes of audio and of video, so a
+	// join with a stale ticket takes the current state.
+	mutes      *muteLog
+	videoMutes *muteLog
 	// replays refuses a control request whose MAC was already served.
 	replays *ctrlauth.ReplayGuard
 
@@ -75,6 +76,7 @@ func NewServer(cfg *Config, logger *zap.Logger) (*Server, error) {
 		controlKey:   key,
 		kicks:        newKickLog(),
 		mutes:        newMuteLog(),
+		videoMutes:   newMuteLog(),
 		replays:      ctrlauth.NewReplayGuard(ctrlauth.DefaultReplayCapacity),
 		refreshAfter: time.After,
 		expireAfter:  time.After,
@@ -91,7 +93,9 @@ func NewServer(cfg *Config, logger *zap.Logger) (*Server, error) {
 	mux.HandleFunc("/ws/signal", s.handleSignal)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc(ctrlauth.KickPath, s.handleKick)
-	mux.HandleFunc(ctrlauth.MutePath, s.handleMute)
+	mux.HandleFunc(ctrlauth.KickDevicePath, s.handleKickDevice)
+	mux.HandleFunc(ctrlauth.MutePath, s.handleMute(mediaAudio))
+	mux.HandleFunc(ctrlauth.VideoMutePath, s.handleMute(mediaVideo))
 
 	s.httpServer = &http.Server{
 		Addr:              cfg.ListenAddr,

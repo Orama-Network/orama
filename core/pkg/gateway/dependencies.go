@@ -722,6 +722,16 @@ func initializeServerless(logger *logging.ColoredLogger, cfg *Config, deps *Depe
 	// fresh instantiate + TinyGo _start per call) visible for correlation
 	// against client-side request_ids.
 	engineCfg.SlowInvokeThresholdMs = 1000
+	engineCfg.NodeID = cfg.NodePeerID
+	// A namespace gateway runs one namespace (bug-963): give it every execution
+	// slot instead of the half that keeps tenants apart on a shared gateway,
+	// and keep its compiled code on disk in its private state directory, so a
+	// restart or an LRU eviction reads it back instead of compiling again, and
+	// the prewarmer can compile the namespace ahead of its first calls.
+	if isNamespaceGateway(cfg) {
+		engineCfg.MaxConcurrentPerNamespace = engineCfg.MaxConcurrentExecutions
+		engineCfg.CompilationCacheDir = filepath.Join(cfg.StateDir, compilationCacheDirName)
+	}
 
 	// Create secrets manager for serverless functions (AES-256-GCM encrypted).
 	//
@@ -974,6 +984,9 @@ func initializeServerless(logger *logging.ColoredLogger, cfg *Config, deps *Depe
 	if err := wireCapabilities(cfg.ClusterSecret, authService, deps.ServerlessHandlers, hostFuncs, logger.Logger); err != nil {
 		return err
 	}
+	// A function asks for the verdict on its caller's attestation under the
+	// policy requests are judged by (feat-965).
+	hostFuncs.SetAttestationJudge(serverlesshandlers.NewAttestationJudge(authService))
 
 	logger.ComponentInfo(logging.ComponentGeneral, "Serverless function engine ready",
 		zap.Int("default_memory_mb", engineCfg.DefaultMemoryLimitMB),

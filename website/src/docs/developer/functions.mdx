@@ -280,7 +280,8 @@ If you see the runtime error `failed to instantiate module: module[X] not instan
 | `get_caller_wallet()` → string | Resolved caller wallet (JWT subject if Bearer auth, else namespace pseudo-id when API-key auth). |
 | `get_caller_jwt_subject()` → string | JWT `sub` claim explicitly. Empty when the request was not JWT-authenticated. Use this when binding on the JWT-signed identity matters (e.g. signup flows verifying the caller signed for the wallet they're registering). |
 | `get_caller_device_id()` → string | The device the caller's session is bound to: the RFC 7638 thumbprint of a key the device proved it holds when the session was issued (the token's `did`). Empty for a session bound to the account alone, an API key, or no credential. Set only by the gateway — a claims provider cannot, and a client cannot state it. Carried into nested `function_invoke` calls. Requires gateway 0.200.0 or later on every node of the namespace. See the technical reference's identity chapter (`docs/whitepaper/technical-reference/vol1/13-identity.md`). |
-| `get_caller_attestation()` → string | What the caller's device attestation proved, as JSON `{"platform", "app_id", "app_version", "attested_at"}`, or empty when the caller's token carries none. It is the gateway's verdict, from the token's signed `att` claim; nothing in the request reaches it. Carried into nested `function_invoke` calls. See [Device attestation](/docs/developer/device-attestation). |
+| `get_caller_attestation()` → string | What the caller's device attestation proved, as JSON `{"platform", "app_id", "app_version", "attested_at"}` plus, where set, `development`, `grapheneos`, `signing_cert_digests` and `os_patch_level`, or empty when the caller's token carries none. It comes from the token's signed `att` claim; nothing in the request reaches it. Carried into nested `function_invoke` calls. It says the session attested, not that the attestation still passes: ask `get_caller_attestation_verdict` for that. See [Device attestation](/docs/developer/device-attestation#in-a-function). |
+| `get_caller_attestation_verdict()` → string | The gateway's verdict on the caller under the namespace's attestation policy as it is at the call, in every mode (`monitor` included), as JSON `{"mode", "verdict", "reason", "message"}`. `verdict` is `admitted`, `attestation_required`, `app_update_required`, `attestation_invalid` (`reason` names the check, e.g. `signing_cert`), `not_configured` (mode `off`) or `unavailable` (the policy cannot be read; retry). Grant something only to the genuine app by refusing anything but `admitted`. See [Device attestation](/docs/developer/device-attestation#in-a-function). |
 | `get_caller_capability()` → string | What the capability the caller's socket was opened with grants, as JSON `{"cap_id","resource","issuer_device","expires_at"}`. Empty when the caller came in on a credential. Not carried into nested `function_invoke` calls. See [Capabilities](#capabilities). |
 | `get_caller_claim(name)` → string | Custom JWT claim by name (tier, subscription, etc.). Empty if missing or non-JWT request. |
 | `get_request_id()` → string | Unique invocation ID |
@@ -991,10 +992,54 @@ orama function rollback my-function 2
 ### Invocation Logging
 
 Every invocation is logged with: request ID, duration, status (success/error/timeout), input/output size, and any `log_info`/`log_error` messages.
+Each record also says where its duration went: `node_id` (the peer ID of the
+node whose gateway ran it), `queue_ms` (waiting for an execution slot),
+`load_ms` (fetching and compiling the module; 0 when it was already in
+memory), and `db_calls` / `db_ms` (the database host calls and their summed
+time). A record written before the gateway recorded these (migration `096`),
+or by a gateway not yet upgraded, has no node and zeros.
 
 ```bash
 orama function logs my-function
 ```
+
+```text
+[2026-10-27T10:02:11Z] SUCCESS  request=5f3c…  duration=231ms
+  node=12D3KooWR4…  queue=0ms  load=0ms  db=2 calls/207ms
+```
+
+**Why one function can answer in 20 ms on one node and 250 ms on another.**
+A read at the default `weak` consistency is answered by the namespace's raft
+leader. On the leader's node that is a local SQLite read; on any other node
+it is a round trip to the leader, for every read, in turn. A namespace whose
+nodes sit in two regions keeps its leader with the co-located pair, so
+invocations on the third node pay the inter-region round trip, tens to
+hundreds of milliseconds, on each read: `db_ms` is then most of the duration
+on that node and almost none of it on the others. This is the cost of the
+consistency a weak read gives, not of the function. What a function can do:
+
+- Read everything an op needs in one `db_query_batch` instead of one call per
+  query: one round trip to the leader for the batch.
+- Read at `consistency: "none"` with a `freshness` bound (`db_query_batch`)
+  what may be slightly stale, such as lists, counts and profile data: the
+  local node answers. Keep `weak` for a read that must see a write made just
+  before it.
+- Fold the read into the `db_transaction` that writes, when it must see that
+  write.
+
+A burst shows as `queue_ms`: a namespace gateway runs ten command-mode
+invocations at once (`function_invoke_async` targets included) and the rest
+wait for a slot.
+
+**First call after a deploy.** A namespace gateway compiles the current version
+of every function of its namespace ahead of its first call: at start, on its
+next check after a deploy made through another gateway (it checks every 15
+seconds), and at once on the gateway that took the deploy. It compiles one
+module at a time. It keeps the compiled code on disk, so a restart
+or a function the in-memory cache of 100 modules evicted reads it back in tens
+of milliseconds instead of compiling it again (one to two seconds for a TinyGo
+module on a node). The first call after that shows the read in `load_ms`; a
+call that lands before its gateway compiled the function pays the compile.
 
 `logs` and `versions` of a function that does not exist answer 404, which the
 CLI exits with 4 (not found); a function that exists and has not run has an
@@ -1116,6 +1161,48 @@ spends the 60-invoke burst in about two seconds and then gets 429s at the
 for its lifetime (`ws_open` / `ws_frame` / `ws_close`); otherwise every frame is
 a separate invocation.
 
+### Frame order on a persistent socket
+
+The frames of one persistent socket run **one at a time, in the order they
+arrived**: `ws_frame` is never called while an earlier `ws_frame` of the same
+socket is still running, and `ws_close` comes after the last one. The
+instance's memory is the connection's state, and a WASM instance runs one call
+at a time; it cannot set a call aside while that call waits in a host
+function. So a frame waiting in `function_invoke` or in a database read holds
+every frame behind it: 30 ops of 200 ms each sent together, each run with
+`function_invoke`, answer the last after 6 seconds. Up to
+`ws_max_inflight_per_conn` frames (64 by default) wait their turn; one more
+closes the socket with 1009.
+
+For ops that do not need to run in order, return from the frame at once and
+run the op with `function_invoke_async`. The target runs beside the frames
+that follow, inherits the socket's identity and client ID, and answers the
+client itself with `ws_send(get_ws_client_id(), …)`. A command-mode target runs
+in the namespace gateway's execution slots, ten at a time per gateway and
+shared by every invocation there, so the same 30 ops answer the last after
+about 600 ms (three rounds of ten) on an otherwise idle gateway. Keep
+`function_invoke` for the ops whose answer must come back in order with the
+frames around it, and keep those short. When the gateway is at its async cap
+(256 in flight), `function_invoke_async` returns 0 and
+`function_invoke_last_error` says `UNAVAILABLE`: run the op inline or answer
+busy.
+
+```go
+//go:wasmexport ws_frame
+func wsFrame(ptr, n uint32) uint32 {
+    req := parse(ptr, n)
+    if needsOrder(req.Op) {           // e.g. a message send whose ack must follow the previous one
+        out := functionInvoke(req.Op, req.Body)
+        wsSend(clientID, out)
+        return 0
+    }
+    if functionInvokeAsync(req.Op, req.Body) == 0 {
+        wsSend(clientID, busy(req.ID)) // the handler answers otherwise
+    }
+    return 0
+}
+```
+
 The socket is authorized once, at the upgrade: `Authorization: Bearer <jwt>`,
 or `?jwt=<token>` where a client cannot set a header. Every frame then runs as
 the identity the upgrade established, so a socket is held to the token that
@@ -1187,15 +1274,19 @@ rate limit on these upgrades are in the technical reference's identity chapter (
 
 ### WebRTC rooms
 
-A namespace with WebRTC enabled can decide who joins its rooms and remove or mute a participant from a
+A namespace with WebRTC enabled can decide who joins its rooms, and from which device, and remove a
+participant or one of their devices and mute their audio or video from a
 function ([WebRTC](/docs/developer/webrtc#identity-admission-and-moderation)). These act on the **calling
 function's own namespace** and on no other; the room, the user and the device are the function's to name.
 
 | Function | Description |
 |----------|-------------|
-| `webrtc_admit(room, user, device, ttl_seconds)` → string | Admits `user` (the identity they will join as, which `webrtc_kick` and `webrtc_mute` take too: their `account_id` claim when the namespace's claims provider names one, otherwise their token's subject; see [Identity](/docs/developer/webrtc#identity)) to `room` for `ttl_seconds` (1 to 86400), from any device when `device` is empty or from that device only. A namespace that [requires admission](/docs/developer/webrtc#admission) lets in only users admitted this way. Admitting again extends the admission and lifts a revocation. Returns JSON `{"room","user_id","device_id","expires_at"}` (unix seconds), or empty on failure (the gateway log says why): an invalid room, a user or device over 256 bytes, a ttl out of range, or a gateway with no WebRTC set up. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32, ttl_seconds i64) → i64`, the packed `ptr<<32 \| len`. |
+| `webrtc_admit(room, user, device, ttl_seconds)` → string | Admits `user` (the identity they will join as, which the other `webrtc_*` functions take too: their `account_id` claim when the namespace's claims provider names one, otherwise their token's subject; see [Identity](/docs/developer/webrtc#identity)) to `room` for `ttl_seconds` (1 to 86400), from any device when `device` is empty or from that device only: `device` is a session's device id, as `get_caller_device_id` returns it ([Admitting one device](/docs/developer/webrtc#admitting-one-device)). A namespace that [requires admission](/docs/developer/webrtc#admission) lets in only users admitted this way. Admitting again extends the admission and lifts a revocation. Returns JSON `{"room","user_id","device_id","expires_at"}` (unix seconds), or empty on failure (the gateway log says why): an invalid room, a user or device over 256 bytes, a ttl out of range, or a gateway with no WebRTC set up. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32, ttl_seconds i64) → i64`, the packed `ptr<<32 \| len`. |
 | `webrtc_kick(room, user)` → i32 | Revokes every admission of `user` to `room` and closes their connection on every SFU of the namespace; the rejoin is refused until they are admitted again. `1` when both were done, `0` otherwise: when any SFU could not be told, the revocation still stands (the log says so) and repeating the call is safe. Signature: `(room_ptr, room_len, user_ptr, user_len i32) → i32`. |
+| `webrtc_kick_device(room, user, device)` → i32 | Revokes the admission of one device of `user` to `room` (`device` is the session's device id; empty is refused, a session bound to no device is kicked with `webrtc_kick`) and closes that device's connection on every SFU of the namespace; the user's other devices stay. The device is refused until it, or the user from every device, is admitted again, even when the user was admitted from every device before the kick. `1` when both were done, `0` otherwise, as `webrtc_kick`. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32) → i32`. |
 | `webrtc_mute(room, user, muted)` → i32 | Stops (`muted` non-zero) or resumes the forwarding of `user`'s audio in `room`, on every SFU of the namespace, so a modified client that keeps sending is still silent. Recorded on their admissions, so it holds when they rejoin (for 7 days after the admission expires), and logged by each SFU so a ticket issued before it cannot undo it. `1` on success, `0` on failure. Signature: `(room_ptr, room_len, user_ptr, user_len, muted i32) → i32`. |
+| `webrtc_mute_video(room, user, muted)` → i32 | `webrtc_mute` for `user`'s video: every video track, camera and screen, is dropped on the server and the room is told with a forced `participant-state` of kind `video`. Recorded, held through a rejoin and logged apart from the audio mute; neither changes the other. `1` on success, `0` on failure. Signature: `(room_ptr, room_len, user_ptr, user_len, muted i32) → i32`. |
+| `webrtc_admission(room, user, device)` → string | What the namespace has on record for one device of `user` in `room` (`device` empty: a session bound to no device), judged as a join from it is when the namespace requires admission. Returns JSON `{"room","user_id","device_id","admitted","revoked","expired","muted","video_muted","expires_at"}`, or empty on failure. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32) → i64`, the packed `ptr<<32 \| len`. |
 
 ```go
 //go:wasmimport env webrtc_admit
@@ -1205,8 +1296,9 @@ func webrtcAdmit(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlS
 admitted := unpack(webrtcAdmit(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), 0, 0, 600))
 ```
 
-A single invocation (or persistent-socket frame) may make at most 100 `webrtc_admit`,
-`webrtc_kick` and `webrtc_mute` calls together, because each writes the namespace's database
+A single invocation (or persistent-socket frame) may make at most 100 `webrtc_*` calls
+(`webrtc_admit`, `webrtc_kick`, `webrtc_kick_device`, `webrtc_mute`, `webrtc_mute_video` and
+`webrtc_admission`) together, because each reads or writes the namespace's database
 and a kick or mute calls every SFU; the 101st fails (`0`, and the gateway log says the
 budget is exceeded), as `pubsub_publish` does past 1000.
 

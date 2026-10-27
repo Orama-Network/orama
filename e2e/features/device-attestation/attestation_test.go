@@ -122,6 +122,41 @@ func TestAttestation_monitorRefusesNothingAndCounts(t *testing.T) {
 	})
 }
 
+// TestAttestation_verdictInEveryMode: get_caller_attestation_verdict tells a
+// function the gateway's verdict on its caller under the policy as it is at
+// the call: not_configured while the mode is off, and under monitor (which
+// refuses nothing) what enforcing would decide; under enforce a caller the
+// gate exempts (an admin) is still told its device never attested
+// (website/src/docs/developer/device-attestation.mdx#in-a-function).
+func TestAttestation_verdictInEveryMode(t *testing.T) {
+	t.Parallel()
+	fx := setup(t)
+	session := signIn(t, fx.c, fx.user, fx.n.Name, fx.dev)
+	if got := fixtureVerdict(t, invoke(t, fx, session.AccessToken, nil)); got.Mode != modeOff || got.Verdict != verdictNotConfigured {
+		t.Errorf("with no policy the function was told %+v", got)
+	}
+
+	for _, step := range []struct {
+		mode, bearer string
+	}{
+		{modeMonitor, session.AccessToken},
+		{modeEnforce, fx.admin.AccessToken},
+	} {
+		setPolicy(t, fx, step.mode)
+		eventually.Require(t, pollEvery, policyBudget, "the function to be told the "+step.mode+" verdict", func() (bool, error) {
+			resp := invoke(t, fx, step.bearer, nil)
+			if resp.Status != http.StatusOK {
+				return false, fmt.Errorf("HTTP %d %s", resp.Status, resp.ErrorCode())
+			}
+			got := fixtureVerdict(t, resp)
+			if got.Mode == step.mode && got.Verdict == verdictRequired && got.Message != "" {
+				return true, nil
+			}
+			return false, fmt.Errorf("told %+v", got)
+		})
+	}
+}
+
 // TestAttest_challengeAndProofs: a challenge is the device-bound session's,
 // used once; a key gets none; a forged Android chain or iOS attestation is
 // ATTESTATION_INVALID and says nothing about which check failed.
@@ -181,4 +216,3 @@ func wouldRefuse(t *testing.T) int64 {
 	}
 	return n
 }
-

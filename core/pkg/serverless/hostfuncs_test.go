@@ -218,6 +218,10 @@ func (m *mockHostServices) GetCallerAttestation(ctx context.Context) string {
 	return ""
 }
 
+func (m *mockHostServices) GetCallerAttestationVerdict(ctx context.Context) string {
+	return ""
+}
+
 func (m *mockHostServices) GetCallerCapability(ctx context.Context) string {
 	return ""
 }
@@ -244,6 +248,18 @@ func (m *mockHostServices) WebRTCKick(ctx context.Context, room, user string) er
 
 func (m *mockHostServices) WebRTCMute(ctx context.Context, room, user string, muted bool) error {
 	return nil
+}
+
+func (m *mockHostServices) WebRTCKickDevice(ctx context.Context, room, user, device string) error {
+	return nil
+}
+
+func (m *mockHostServices) WebRTCMuteVideo(ctx context.Context, room, user string, muted bool) error {
+	return nil
+}
+
+func (m *mockHostServices) WebRTCAdmission(ctx context.Context, room, user, device string) (string, error) {
+	return "", nil
 }
 
 func (m *mockHostServices) EnqueueBackground(ctx context.Context, functionName string, payload []byte) (string, error) {

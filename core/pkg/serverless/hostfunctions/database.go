@@ -25,6 +25,7 @@ const dbQueryBatchTimeout = 10 * time.Second
 
 // DBQuery executes a SELECT query and returns JSON-encoded results.
 func (h *HostFunctions) DBQuery(ctx context.Context, query string, args []interface{}) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_query"); err != nil {
 		return nil, err
 	}
@@ -52,6 +53,7 @@ func (h *HostFunctions) DBQuery(ctx context.Context, query string, args []interf
 // migrate function silently dropped statements). For new code, prefer
 // DBExecuteV2 which returns a typed envelope.
 func (h *HostFunctions) DBExecute(ctx context.Context, query string, args []interface{}) (int64, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_execute"); err != nil {
 		return 0, err
 	}
@@ -86,6 +88,7 @@ type dbExecuteV2Result struct {
 // Returns a Go error only for host-side setup failures (no DB). SQL errors
 // are encoded in the JSON envelope's "error" field.
 func (h *HostFunctions) DBExecuteV2(ctx context.Context, query string, args []interface{}) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_execute_v2"); err != nil {
 		return nil, err
 	}
@@ -127,6 +130,7 @@ type dbQueryV2Result struct {
 // DBQueryV2 is the typed equivalent of DBQuery. Distinguishes "empty
 // result set" from "query failed" via the "error" field.
 func (h *HostFunctions) DBQueryV2(ctx context.Context, query string, args []interface{}) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_query_v2"); err != nil {
 		return nil, err
 	}
@@ -160,6 +164,7 @@ type dbTransactionRequest struct {
 // Returns an error only for setup/validation problems. A rolled-back batch is
 // communicated via committed=false in the returned JSON; that's not a Go error.
 func (h *HostFunctions) DBTransaction(ctx context.Context, opsJSON []byte) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_transaction"); err != nil {
 		return nil, err
 	}
@@ -399,6 +404,7 @@ type dbQueryBatchResult struct {
 // leader): 10 sequential DBQuery host calls = ~3.5s; one DBQueryBatch
 // with 10 statements = ~340ms. 10× speedup.
 func (h *HostFunctions) DBQueryBatch(ctx context.Context, opsJSON []byte) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "db_query_batch"); err != nil {
 		return nil, err
 	}
@@ -502,6 +508,7 @@ type execAndPublishResult struct {
 func (h *HostFunctions) ExecAndPublish(
 	ctx context.Context, opsJSON []byte, topic string, dataTemplate []byte,
 ) ([]byte, error) {
+	defer serverless.RecordDBCall(ctx, time.Now())
 	if err := h.checkDatabaseAccess(ctx, "exec_and_publish"); err != nil {
 		return nil, err
 	}

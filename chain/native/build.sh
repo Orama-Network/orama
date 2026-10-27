@@ -56,8 +56,9 @@ fi
 # machine with the same toolchain. One build at a time: the directory is fixed.
 stage="${ORAMA_NATIVE_STAGE:-/tmp/orama-native-build}"
 rm -rf "$stage"
-mkdir -p "$stage/native" "$stage/x/shielded"
+mkdir -p "$stage/native/patches" "$stage/x/shielded"
 cp -R "$here/Cargo.toml" "$here/Cargo.lock" "$here/src" "$here/vendor" "$stage/native/"
+rsync -a --exclude target "$here/patches/cosmwasm-crypto" "$stage/native/patches/"
 rsync -a --exclude target "$chain/x/shielded/orchardffi" "$stage/x/shielded/"
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 sysroot="$(rustup run "$toolchain" rustc --print sysroot)"

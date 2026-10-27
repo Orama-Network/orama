@@ -15,9 +15,10 @@ const (
 	// revokeFetchCap sends on DELETE /v1/storage/fetch-caps/{id}.
 	corsAllowHeaders = "Content-Type, Authorization, X-API-Key, X-Orama-Revoke-Key"
 	// corsExposeHeaders are the response headers beyond the CORS-safelisted
-	// ones a page may read: Retry-After, which the SDK waits by on a 429 or
-	// 503 and which a cross-origin page could not otherwise see.
-	corsExposeHeaders = "Retry-After"
+	// ones a page may read, which a cross-origin page could not otherwise see:
+	// Retry-After, which the SDK waits by on a 429 or 503, and Date, the
+	// gateway's clock, which the SDK stamps its device proofs on.
+	corsExposeHeaders = "Retry-After, Date"
 )
 
 // namespaceAllowsOrigin reports whether the namespace r's host names

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Orama-Network/orama/e2e/harness"
+	"github.com/Orama-Network/orama/e2e/harness/eventually"
 	"github.com/Orama-Network/orama/e2e/harness/gw"
 	"github.com/Orama-Network/orama/e2e/harness/ns"
 	"github.com/Orama-Network/orama/e2e/harness/wallet"
@@ -17,6 +18,8 @@ import (
 const (
 	// proofWindow: "iat must be within 60 seconds of the gateway's clock".
 	proofWindow = 60 * time.Second
+	// skewedClock is how far off the phone's clock is in the bug-961 report.
+	skewedClock = 10 * time.Minute
 	// deviceRefreshPrefix marks a device-bound refresh token (docs/whitepaper/technical-reference/vol1/13-identity.md#signing-in-with-a-device).
 	deviceRefreshPrefix = "dv1_"
 )
@@ -69,6 +72,70 @@ type proofCase struct {
 	code string
 }
 
+// TestDeviceRefresh_aSkewedClockIsToldTheGatewaysTime: a phone whose clock is
+// ten minutes ahead or behind is refused by name (DEVICE_PROOF_CLOCK_SKEW),
+// not as a forged or replayed proof, and the refusal and every answer's Date
+// header carry the gateway's clock. A proof stamped on that clock refreshes;
+// replaying it is still refused, as is every spent proof (bug-961,
+// docs/whitepaper/technical-reference/vol1/13-identity.md#device-proofs).
+func TestDeviceRefresh_aSkewedClockIsToldTheGatewaysTime(t *testing.T) {
+	t.Parallel()
+	f := harness.Fleet(t)
+	n := ns.New(t, f, ns.Options{})
+	c := harness.GW(t)
+	d := gw.NewDevice(t, wallet.AlgEd25519)
+	s := signInSession(t, c, member(t, n, roleRuntime), n.Name, d)
+	rt := s.RefreshToken
+	for name, skew := range map[string]time.Duration{"ahead": skewedClock, "behind": -skewedClock} {
+		skewed, err := d.ProofAt(wallet.ProofRefresh, n.Name, rt, time.Now().Add(skew), randomB64(t, 24))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := refreshWith(t, c, rt, n.Name, skewed)
+		body := expectCode(t, resp, http.StatusUnauthorized, "DEVICE_PROOF_CLOCK_SKEW")
+		serverTime, ok := body["server_time"].(float64)
+		if !ok {
+			t.Fatalf("a clock %s: the refusal carries no server_time: %s", name, resp.Body)
+		}
+		if drift := time.Since(time.Unix(int64(serverTime), 0)).Abs(); drift > proofWindow {
+			t.Errorf("a clock %s: server_time is %s from the runner's clock", name, drift)
+		}
+		date, err := http.ParseTime(resp.Header.Get("Date"))
+		if err != nil {
+			t.Errorf("a clock %s: the refusal has no Date header the SDK can read: %v", name, err)
+		} else if drift := date.Sub(time.Unix(int64(serverTime), 0)).Abs(); drift > 2*time.Second {
+			t.Errorf("a clock %s: Date %s and server_time %v disagree", name, date, serverTime)
+		}
+	}
+	corrected, err := d.ProofAt(wallet.ProofRefresh, n.Name, rt, time.Now(), randomB64(t, 24))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next gw.Session
+	if err := refreshWith(t, c, rt, n.Name, corrected).Expect(t, http.StatusOK).Decode(&next); err != nil {
+		t.Fatalf("the proof on the gateway's clock after two skew refusals (nothing was spent): %v", err)
+	}
+	protect(t, c, next.AccessToken, next.RefreshToken)
+	expectCodeNamed(t, "the corrected proof replayed", refreshWith(t, c, next.RefreshToken, n.Name, corrected), http.StatusUnauthorized, "DEVICE_PROOF_INVALID")
+}
+
+// gatewaySecondAfter waits until the gateway's clock, as its Date header
+// reads it, is past the second resp was answered in.
+func gatewaySecondAfter(t testing.TB, c *gw.Client, resp *gw.Response) {
+	t.Helper()
+	answered, err := http.ParseTime(resp.Header.Get("Date"))
+	if err != nil {
+		t.Fatalf("the gateway's answer has no Date header: %v", err)
+	}
+	eventually.Require(t, pollEvery, revocationStaleness, "the gateway's clock to leave "+answered.String(), func() (bool, error) {
+		now, err := http.ParseTime(c.MustSend(t, gw.Req{Path: gw.PathWhoami}).Header.Get("Date"))
+		if err != nil {
+			return false, err
+		}
+		return now.After(answered), nil
+	})
+}
+
 // badRefreshProofs is every way a refresh proof can be wrong: missing, stale,
 // from the future, a short id, another action, token, namespace or device.
 func badRefreshProofs(t testing.TB, d, other *wallet.Device, namespace, rt string) []proofCase {
@@ -83,8 +150,8 @@ func badRefreshProofs(t testing.TB, d, other *wallet.Device, namespace, rt strin
 	}
 	return []proofCase{
 		{"no proof", nil, "DEVICE_PROOF_REQUIRED"},
-		{"stale proof", at(now.Add(-2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_INVALID"},
-		{"proof from the future", at(now.Add(2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_INVALID"},
+		{"stale proof", at(now.Add(-2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_CLOCK_SKEW"},
+		{"proof from the future", at(now.Add(2*proofWindow), randomB64(t, 24)), "DEVICE_PROOF_CLOCK_SKEW"},
 		{"id too short", at(now, "tooShort"), "DEVICE_PROOF_INVALID"},
 		{"proof for another action", proof(t, d, wallet.ProofRevoke, namespace, rt), "DEVICE_PROOF_INVALID"},
 		{"proof over another token", proof(t, d, wallet.ProofRefresh, namespace, rt+"x"), "DEVICE_PROOF_INVALID"},
@@ -133,4 +200,54 @@ func TestDeviceSession_actsNeedTheDevicesProof(t *testing.T) {
 	if _, err := c.For(t).RevokeDevice(t.Context(), bound.AccessToken, spare.ID(), proof(t, d, wallet.ProofRevoke, n.Name, spare.ID())); err != nil {
 		t.Fatalf("revoking again with a proper proof is safe to repeat: %v", err)
 	}
+}
+
+// TestDeviceSession_logoutAllNeedsTheDevicesProof: from a device-bound
+// session, POST /v1/auth/logout {"all": true} with the access token alone is
+// refused by name and every other session of the account stays valid; a
+// proof for another action does not do; the device's logout-all proof over its
+// own id ends every session on every gateway, and is good once. A session
+// bound to no device logs out everywhere without one (bug-960,
+// docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device).
+func TestDeviceSession_logoutAllNeedsTheDevicesProof(t *testing.T) {
+	t.Parallel()
+	f := harness.Fleet(t)
+	n := ns.New(t, f, ns.Options{})
+	c := harness.GW(t)
+	nodes := perNode(t, f, c)
+	w := member(t, n, roleRuntime)
+	d, spare := gw.NewDevice(t, wallet.AlgEd25519), gw.NewDevice(t, wallet.AlgES256)
+	bound := signInSession(t, c, w, n.Name, d)
+	other := signInSession(t, c, w, n.Name, spare)
+	plain := signInSession(t, c, w, n.Name, nil)
+
+	resp, _ := c.For(t).LogoutAll(t.Context(), bound.AccessToken, bound.RefreshToken, n.Name, nil)
+	expectCode(t, resp, http.StatusUnauthorized, "DEVICE_PROOF_REQUIRED")
+	acceptedEverywhere(t, nodes, other.AccessToken, "the other device's token after a refused logout-all")
+	acceptedEverywhere(t, nodes, plain.AccessToken, "the wallet's own token after a refused logout-all")
+	resp, _ = c.For(t).LogoutAll(t.Context(), bound.AccessToken, bound.RefreshToken, n.Name, proof(t, d, wallet.ProofEndSession, n.Name, d.ID()))
+	expectCode(t, resp, http.StatusUnauthorized, "DEVICE_PROOF_INVALID")
+
+	good := proof(t, d, wallet.ProofLogoutAll, n.Name, d.ID())
+	loggedOut, err := c.For(t).LogoutAll(t.Context(), bound.AccessToken, bound.RefreshToken, n.Name, good)
+	if err != nil {
+		t.Fatalf("logout-all with the device's proof: %v", err)
+	}
+	refusedEverywhere(t, nodes, other.AccessToken, "the other device's token after logout-all")
+	refusedEverywhere(t, nodes, plain.AccessToken, "the wallet's own token after logout-all")
+
+	// A token minted in the revocation's own second is refused with the ones
+	// before it (iat has one-second resolution), so the device signs in again
+	// once the gateway's clock has left that second.
+	gatewaySecondAfter(t, c, loggedOut)
+	again := signInSession(t, c, w, n.Name, d)
+	resp, _ = c.For(t).LogoutAll(t.Context(), again.AccessToken, again.RefreshToken, n.Name, good)
+	expectCode(t, resp, http.StatusUnauthorized, "DEVICE_PROOF_INVALID")
+	acceptedEverywhere(t, nodes, again.AccessToken, "the device's new session after a replayed logout-all proof")
+
+	unbound := signInSession(t, c, w, n.Name, nil)
+	if _, err := c.For(t).Logout(t.Context(), unbound.AccessToken, unbound.RefreshToken, n.Name, true); err != nil {
+		t.Fatalf("a session bound to no device logs out everywhere without a proof: %v", err)
+	}
+	refusedEverywhere(t, nodes, again.AccessToken, "the device's session after the wallet logged out everywhere")
 }

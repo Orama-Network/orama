@@ -18,16 +18,19 @@ func TestEngine_HostModule_GetCallerAttestationExported(t *testing.T) {
 	}
 	defer func() { _ = engine.runtime.Close(context.Background()) }()
 
-	for _, name := range []string{"env", "host", "orama"} {
-		def, ok := engine.runtime.Module(name).ExportedFunctionDefinitions()["get_caller_attestation"]
-		if !ok {
-			t.Fatalf("%s.get_caller_attestation is not exported", name)
-		}
-		if len(def.ParamTypes()) != 0 {
-			t.Errorf("%s.get_caller_attestation params = %v, want none", name, def.ParamTypes())
-		}
-		if results := def.ResultTypes(); len(results) != 1 || results[0] != api.ValueTypeI64 {
-			t.Errorf("%s.get_caller_attestation results = %v, want (i64 ptr<<32|len)", name, results)
+	// feat-965: get_caller_attestation_verdict has the same shape.
+	for _, fn := range []string{"get_caller_attestation", "get_caller_attestation_verdict"} {
+		for _, name := range []string{"env", "host", "orama"} {
+			def, ok := engine.runtime.Module(name).ExportedFunctionDefinitions()[fn]
+			if !ok {
+				t.Fatalf("%s.%s is not exported", name, fn)
+			}
+			if len(def.ParamTypes()) != 0 {
+				t.Errorf("%s.%s params = %v, want none", name, fn, def.ParamTypes())
+			}
+			if results := def.ResultTypes(); len(results) != 1 || results[0] != api.ValueTypeI64 {
+				t.Errorf("%s.%s results = %v, want (i64 ptr<<32|len)", name, fn, results)
+			}
 		}
 	}
 }

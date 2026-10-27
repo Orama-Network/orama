@@ -3,7 +3,7 @@
 > **At a glance.**
 >
 > - **What:** three per-namespace services layered on the namespace gateway. Serverless functions run tenant WebAssembly in a wazero sandbox inside the gateway. Push notifications route a message to a device through APNs, Expo or ntfy, using the namespace's own credentials. WebRTC runs a pion selective forwarding unit (SFU) on each member node and one shared TURN relay per host.
-> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 51 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
+> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 55 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
 > - **Code:** `core/pkg/serverless/`, `core/pkg/push/`, `core/pkg/sfu/`, `core/pkg/turn/`.
 
 ![Serverless functions: callers, the namespace gateway and what a function can reach](../technical-reference/diagrams/ch21-overview.svg)
@@ -18,9 +18,9 @@ A function is a TinyGo program compiled to WASM, sealed and stored in IPFS, and 
 
 ### Shapes and sandbox
 
-A command function reads JSON on stdin, writes JSON on stdout and gets a fresh instance per call, with memory capped by an allocator that makes `memory.grow` return -1. A reactor exports `handle`; because a cold TinyGo `_initialize` costs about 550 ms, the engine keeps up to two pre-initialised one-shot instances per module. A persistent function holds one instance for a WebSocket's lifetime (5,000 per gateway). Instances are never reused: the pool moves the cold start, not the isolation.
+A command function reads JSON on stdin, writes JSON on stdout and gets a fresh instance per call, with memory capped by an allocator that makes `memory.grow` return -1. A reactor exports `handle`; because a cold TinyGo `_initialize` costs about 550 ms, the engine keeps up to two pre-initialised one-shot instances per module. A persistent function holds one instance per WebSocket (5,000 per gateway), running frames one at a time. Instances are never reused: the pool moves the cold start, not the isolation.
 
-A guest sees stdin, stdout, the host clocks and the host CSPRNG: no filesystem, environment or sockets. wazero has no fuel metering, so CPU is bounded indirectly by the deadline, the memory cap, a slot semaphore (10 per process, 5 per namespace), per-invocation budgets such as 1,000 publishes, and token-bucket rate limits (10 per second per wallet with burst 60, 2 per second per address, 250,000 a minute per namespace).
+A guest sees stdin, stdout, the host clocks and the host CSPRNG: no filesystem, environment or sockets. wazero has no fuel metering, so CPU is bounded indirectly by the deadline, the memory cap, a slot semaphore (10 per namespace gateway), per-invocation budgets such as 1,000 publishes, and token-bucket rate limits (10 per second per wallet with burst 60, 2 per second per address, 250,000 a minute per namespace).
 
 ### Deploy and invoke
 
@@ -34,7 +34,7 @@ Two trigger kinds start an invocation with no caller. Every gateway polls cron r
 
 ### Host functions and egress
 
-The 51 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, HTTP and nested invocation. A function is the namespace's own code, so host calls do not re-check the caller.
+The 55 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, HTTP and nested invocation. A function is the namespace's own code, so host calls do not re-check the caller.
 
 Outbound `http_fetch` runs from the cluster's own network, so the guard sits where the address is final: a dial-time check on every resolved address and redirect hop refuses loopback, private, link-local and carrier-grade ranges and the chain's block. A name that resolved to an overlay address once passed a URL check and reached the mesh. `anon_fetch` goes through the node's Tor client with no direct fallback, so it fails loudly rather than leak the gateway's address.
 
@@ -64,7 +64,7 @@ WebRTC is opt-in per namespace. Enabling it generates a 32-byte TURN secret, all
 
 A room lives in exactly one SFU, which every gateway must find without coordination. The gateway ranks the namespace's SFU nodes by SHA-256 of namespace, room and node id (rendezvous hashing), probes each `GET /health?room=` with a 1.5 s timeout, and picks the first healthy node already hosting the room, else the top-ranked healthy one. Nothing is written, so no lease can go stale. With no healthy SFU the join fails, because a local fallback would split the call.
 
-The gateway authenticates the user, checks admission in the namespace database when the namespace requires it, and signs a 30 s ticket (HMAC under a key derived from the TURN secret) naming user, device, room, mute flag and admission end. The user is the account the namespace's claims provider signed into the token (`account_id`), else the token subject, so peers never see a wallet the namespace named an account for. It proxies the socket to the SFU's WireGuard address. The SFU takes identity only from the ticket, and kicks the peer when its admission ends.
+The gateway authenticates the user, checks admission in the namespace database when the namespace requires it, and signs a 30 s ticket (HMAC under a key derived from the TURN secret) naming user, device, room, audio and video mute flags and admission end. The user is the token's `account_id` claim, else its subject, so peers never see a wallet the namespace named an account for. It proxies the socket to the SFU's WireGuard address. The SFU takes identity only from the ticket, and kicks the peer when its admission ends.
 
 ### Media and TURN
 
@@ -74,7 +74,7 @@ TURN is one `orama-turn` process per host serving every namespace on it. The fir
 
 ### Kick, mute and role placement
 
-A kick revokes the user's admissions first, then posts to every SFU of the namespace, not only the owner, since probes can change who hosts a room. Each SFU keeps a kick log that compares admission generations, so a user re-admitted after a kick can rejoin at once. A mute is enforced per audio packet on the server and survives rejoin. Control calls carry a MAC with a nonce, valid 60 s and refused on reuse.
+A kick revokes the user's admissions first, then posts to every SFU of the namespace, not only the owner, since probes can change who hosts a room. Each SFU keeps a kick log that compares admission generations, so a user re-admitted after a kick can rejoin at once. A kick can target one device alone, by its session device id. Audio and video mutes are separate, enforced per packet, and survive rejoin. Control calls carry a MAC with a nonce, valid 60 s and refused on reuse.
 
 A reconciler on every node runs each 60 s to match SFU and TURN placement to the allocation table. Only the lowest-sorted live member reallocates, and only under a strict majority of viable members. Stopping a unit needs a clean read showing no allocation, so a registry error never causes an outage.
 
@@ -86,4 +86,4 @@ A WASM block missing from a node's Kubo yields a retryable 503 after bounded rea
 
 A function can use its namespace's database (minus platform tables), read every secret of the namespace, push to any user in it and call any function in it. It cannot reach another namespace, a reserved address, a file or a socket. A runtime API key carries `push:write`, so a leaked one can push to any user of its namespace; WebRTC data-plane routes refuse an API key alone. The TURN server sets no peer permission handler, so a client with a valid credential can ask it to send UDP to the host's own loopback and overlay addresses.
 
-The limit that matters most is shared capacity: each namespace gateway runs five command-mode functions at once, and every tenant on a host shares one TURN relay range of 16,384 ports.
+The limit that matters most is shared capacity: each namespace gateway runs ten command-mode functions at once, and every tenant on a host shares one TURN relay range of 16,384 ports.

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AuthClient } from '../../../src/auth/client';
 import { MemoryStorage } from '../../../src/auth/types';
 import { HttpClient } from '../../../src/core/http';
+import { LogoutError } from '../../../src/errors';
 import {
   DeviceSigner,
   deviceIdOf,
@@ -236,6 +237,52 @@ describe('managing devices', () => {
 
     await auth.logout();
     expect(requests[0].body).toEqual({ refresh_token: 'dv1_refresh', namespace: 'anchat' });
+  });
+
+  // bug-960: from a device-bound session, logging out everywhere is the
+  // device's act, signed as revoking a device is.
+  it('signs a logout-all proof over its own device id when a device-bound session logs out everywhere', async () => {
+    const { fetchImpl, requests } = gateway({ '/v1/auth/logout': () => json(200, { status: 'ok' }) });
+    const storage = new MemoryStorage();
+    await storage.set('refreshToken', 'dv1_refresh');
+    await storage.set('namespace', 'anchat');
+    await storage.set('deviceId', 'd1');
+    const { auth } = build(fetchImpl, storage);
+    auth.setJwt('a.b.c');
+    const signer = recordingSigner();
+    auth.setDeviceSigner(signer);
+
+    await auth.logout({ all: true });
+
+    const { device_proof, ...rest } = requests[0].body;
+    expect(rest).toEqual({ all: true, namespace: 'anchat', refresh_token: 'dv1_refresh' });
+    expect(signer.signed[0]).toBe(deviceProofMessage('logout-all', 'anchat', 'd1', device_proof.iat, device_proof.id));
+    expect(auth.getToken()).toBeUndefined();
+  });
+
+  it('clears the local session and says the gateway was not told when logging out everywhere without the device key', async () => {
+    const { fetchImpl, requests } = gateway({ '/v1/auth/logout': () => json(200, { status: 'ok' }) });
+    const storage = new MemoryStorage();
+    await storage.set('refreshToken', 'dv1_refresh');
+    await storage.set('deviceId', 'd1');
+    const { auth } = build(fetchImpl, storage);
+    auth.setJwt('a.b.c');
+
+    const failure = await auth.logout({ all: true }).catch((e) => e);
+
+    expect(failure).toBeInstanceOf(LogoutError);
+    expect(failure.code).toBe('DEVICE_PROOF_REQUIRED');
+    expect(requests).toHaveLength(0);
+    expect(auth.getToken()).toBeUndefined();
+  });
+
+  it('ends every session without a proof from a session bound to no device, as it always has', async () => {
+    const { fetchImpl, requests } = gateway({ '/v1/auth/logout': () => json(200, { status: 'ok' }) });
+    const { auth } = build(fetchImpl);
+    auth.setJwt('a.b.c');
+
+    await auth.logout({ all: true });
+    expect(requests[0].body).toEqual({ all: true });
   });
 
   // RFC 8037 appendix A.3: the gateway computes the same thumbprint.

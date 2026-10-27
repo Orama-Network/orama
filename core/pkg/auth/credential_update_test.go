@@ -109,9 +109,22 @@ func TestUpdateEnhancedCredentials_waitsForLockHolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran := make(chan struct{})
+	updated := make(chan error, 1)
 	go func() {
-		_ = UpdateEnhancedCredentials(func(*EnhancedCredentialStore) error { close(ran); return nil })
+		updated <- UpdateEnhancedCredentials(func(*EnhancedCredentialStore) error { close(ran); return nil })
 	}()
+	// The update saves the file and releases the lock after its callback
+	// returns; the test waits for that, so TempDir's cleanup never races it.
+	t.Cleanup(func() {
+		select {
+		case err := <-updated:
+			if err != nil {
+				t.Errorf("update: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("update did not return")
+		}
+	})
 	select {
 	case <-ran:
 		t.Fatal("update ran while another holder had the lock")

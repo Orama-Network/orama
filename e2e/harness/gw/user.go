@@ -137,7 +137,7 @@ func (u *User) logoutAll(t testing.TB) {
 	defer cancel()
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	resp, err := u.Client.Logout(ctx, u.Session.AccessToken, u.Session.RefreshToken, u.Session.Namespace, true)
+	resp, err := u.Client.LogoutEverywhere(ctx, u.Session, u.Session.Namespace, u.Device)
 	if err != nil && (resp == nil || resp.Status != 401) {
 		// 401 means a test already ended the session, which is not a leak.
 		t.Errorf("cleanup: failed to log %s out: %v", u.Wallet.Address(), err)

@@ -224,7 +224,7 @@ func TestSignalHandler_notRequiredKeepsOldBehaviourButMuteHolds(t *testing.T) {
 
 	ctx := httptest.NewRequest("GET", "/", nil).Context()
 	h.admissions.Admit(ctx, "ns", "open-room", "0xanyone", "", time.Hour)
-	h.admissions.SetMuted(ctx, "ns", "open-room", "0xanyone", true)
+	h.admissions.SetMuted(ctx, "ns", "open-room", "0xanyone", MediaAudio, true)
 	req, w = signalAs(h, "open-room", "0xanyone", "")
 	if w.Code != http.StatusOK || !openTicketOf(t, req).Muted {
 		t.Fatalf("a muted user's rejoin: status %d, want a ticket that says muted", w.Code)

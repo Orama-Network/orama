@@ -15,7 +15,7 @@ A session bound to a device:
 
 - is issued only against the device's signature over the same sign-in message the wallet signed;
 - is refreshed only with a fresh proof from the device;
-- carries the device in its access tokens as `did`, which a function reads with `get_caller_device_id` the way it reads the account with `get_caller_jwt_subject`;
+- carries the device in its access tokens as `did`, which a function reads with `get_caller_device_id` the way it reads the account with `get_caller_jwt_subject` (and by which it admits, kicks or checks that one device in a WebRTC room: [Admitting one device](/docs/developer/webrtc#admitting-one-device));
 - ends, with its refresh tokens, access tokens and every socket they hold open, when the device is revoked, while the account's other devices stay signed in.
 
 Binding a device is the client's choice in every namespace. A namespace's session policy decides what a sign-in that binds none may still get. Sessions without a device keep working as before.
@@ -43,7 +43,7 @@ The access token of a device-bound session is still a bearer token for its 15 mi
 
 ## Proving the device on later requests
 
-Refreshing a device-bound session, approving a link from a device, collecting a linked session, and (from a device-bound session) revoking a device or ending a session each carry a **device proof**:
+Refreshing a device-bound session, approving a link from a device, collecting a linked session, and (from a device-bound session) revoking a device, ending a session or logging out everywhere each carry a **device proof**:
 
 ```json
 "device_proof": { "iat": 1790000000, "id": "<16-128 chars of [A-Za-z0-9_-], random>", "sig": "<base64url>" }
@@ -53,14 +53,14 @@ Refreshing a device-bound session, approving a link from a device, collecting a 
 
 ```text
 orama-device-proof-v1
-<action>          refresh | approve | claim | revoke | end-session
+<action>          refresh | approve | claim | revoke | end-session | logout-all
 <namespace>
-<binding>         the refresh token | the user code | the device code | the device id | the session id
+<binding>         the refresh token | the user code | the device code | the device id | the session id | the caller's own device id
 <iat>
 <id>
 ```
 
-`iat` must be within 60 seconds of the gateway's clock, and `id` is spent in the nonce table, so a proof is good once, for one action on one credential. In a namespace that attests devices, an iOS app's refresh proof also carries `app_attest`, an App Attest assertion over `SHA-256(id ‖ device_id)` ([Device attestation](/docs/developer/device-attestation)). A refresh without the proof is refused before anything is spent, so a thief holding only the refresh token cannot use it up.
+`iat` must be within 60 seconds of the gateway's clock, and `id` is spent in the nonce table, so a proof is good once, for one action on one credential. A phone's clock can be minutes off (set by hand, a dead clock battery, a network serving the wrong time), so stamp `iat` on the gateway's clock: every answer's `Date` header is that clock, and a proof refused for its time answers `DEVICE_PROOF_CLOCK_SKEW` with `server_time` (unix seconds). Nothing is spent by that refusal; sign a new proof, with a new id, on `server_time`. The SDK does both on its own. A refusal for time is the phone's clock, never a forged or replayed proof: tell the user their clock is wrong rather than signing them out. In a namespace that attests devices, an iOS app's refresh proof also carries `app_attest`, an App Attest assertion over `SHA-256(id ‖ device_id)` ([Device attestation](/docs/developer/device-attestation)). A refresh without the proof is refused before anything is spent, so a thief holding only the refresh token cannot use it up.
 
 ## Revoking a device
 
@@ -72,6 +72,8 @@ DELETE /v1/auth/devices/{id}     revoke one
 Revoking tombstones the device, revokes its refresh tokens (including the reuse-grace slot a just-rotated one would still have) and puts `device:<id>` on the revocation list, so its access tokens and sockets stop within ten seconds on every gateway. The account's other devices are untouched. Push registrations made from the device end with it.
 
 Any of the account's sessions may revoke any of its devices: one bound to an active device, with that device's proof, or one bound to no device (which only the wallet can have made). The proof is what stops an access token lifted off one phone signing the account out of all the others. A session bound to a pending or revoked device can do nothing here.
+
+Logging out everywhere is held to the same rule. `POST /v1/auth/logout` with `"all": true` ends every session of the account, its refresh tokens and the access tokens already issued. From a session bound to a device it carries that device's `logout-all` proof over the device's own id, or it is refused `DEVICE_PROOF_REQUIRED` and every session stays valid. A session bound to no device needs none.
 
 **When the user cannot help themselves.** Under the `approval` policy an account that lost its only device has nothing left that can approve a new one, and a wallet signature alone cannot, by design. A namespace operator (members-write permission) can:
 
@@ -128,7 +130,8 @@ A gateway that predates devices knows nothing of the policy, of device-bound sig
 | `DEVICE_KEY_INVALID` | The key is not a P-256 or Ed25519 public JWK, or is not the device the message names (400) |
 | `DEVICE_SIGNATURE_INVALID` | The device's signature over the sign-in message does not verify (401) |
 | `DEVICE_PROOF_REQUIRED` | A device-bound credential was presented without the device's proof (401) |
-| `DEVICE_PROOF_INVALID` | The proof is stale, reused, or not the device's (401) |
+| `DEVICE_PROOF_INVALID` | The proof is malformed, reused, or not the device's (401) |
+| `DEVICE_PROOF_CLOCK_SKEW` | The proof's time is more than 60 seconds from the gateway's clock; `server_time` is the gateway's clock (401) |
 | `DEVICE_REVOKED` | The device was revoked; its key can never hold a session again (403) |
 | `DEVICE_PENDING` | The device waits for another of the account's devices to approve it (403, or 202 on sign-in) |
 | `DEVICE_NOT_FOUND` | The account has no such device (404) |

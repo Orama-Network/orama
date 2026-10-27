@@ -115,12 +115,7 @@ func (h *Handlers) SessionByIDHandler(w http.ResponseWriter, r *http.Request) {
 // sessions of the wallet that happened to mint it.
 func (h *Handlers) sessionOwner(w http.ResponseWriter, r *http.Request) (subject, namespace string, ok bool) {
 	ctx := r.Context()
-	namespace = h.defaultNS
-	if v := ctx.Value(CtxKeyNamespaceOverride); v != nil {
-		if s, cast := v.(string); cast && s != "" {
-			namespace = s
-		}
-	}
+	namespace = h.servedNamespace(r)
 
 	claims, cast := ctx.Value(CtxKeyJWT).(*authsvc.JWTClaims)
 	if !cast || claims == nil || strings.TrimSpace(claims.Sub) == "" {
@@ -129,6 +124,15 @@ func (h *Handlers) sessionOwner(w http.ResponseWriter, r *http.Request) (subject
 		return "", "", false
 	}
 	return claims.Sub, namespace, true
+}
+
+// servedNamespace is the namespace this gateway serves the request for: the
+// namespace gateway's own, or this one's default.
+func (h *Handlers) servedNamespace(r *http.Request) string {
+	if s, cast := r.Context().Value(CtxKeyNamespaceOverride).(string); cast && s != "" {
+		return s
+	}
+	return h.defaultNS
 }
 
 // formatSessionTime renders a timestamp, or nothing when the column was empty.

@@ -1,0 +1,20 @@
+# Differential test of the cosmwasm-crypto fork (../cosmwasm-crypto) against the crates.io release it
+# replaces, cosmwasm-crypto 3.0.9 on k256 0.13.4 and p256 0.13.2. Every ECDSA entry point the fork
+# changes (secp256k1 and secp256r1 verify and public-key recovery) must return the same value or the
+# same error code on every input. Test-only: never linked into anything, and its own workspace, so
+# the upstream release it compares with (and its crypto-bigint 0.5) never enters chain/native's lock.
+[package]
+name = "cosmwasm-crypto-differential"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+upstream = { package = "cosmwasm-crypto", version = "=3.0.9" }
+fork = { package = "cosmwasm-crypto", path = "../cosmwasm-crypto" }
+# The signers that make real signatures for the inputs: the curve crates upstream verifies with.
+k256 = { version = "=0.13.4", features = ["ecdsa"] }
+p256 = { version = "=0.13.2", features = ["ecdsa"] }
+rand = "0.8"
+
+[workspace]

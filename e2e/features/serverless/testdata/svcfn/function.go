@@ -114,6 +114,21 @@ func dispatch(req request) any {
 			n++
 		}
 		return map[string]any{"spun": n}
+	case "reads":
+		// Count sequential reads: the shape of an op a persistent socket's
+		// router runs. With value "send" the op answers the socket itself, as
+		// a function_invoke_async target must.
+		const one = "SELECT 1"
+		for i := 0; i < req.Count; i++ {
+			dbQueryV2(ptr(one), size(one), 0, 0)
+		}
+		out := map[string]any{"id": req.Key, "reads": req.Count}
+		if req.Value == "send" {
+			b, _ := json.Marshal(out)
+			msg, client := string(b), unpack(getWSClientID())
+			wsSend(ptr(client), size(client), ptr(msg), size(msg))
+		}
+		return out
 	case "alloc":
 		b := make([]byte, req.Size<<20)
 		for i := range b {

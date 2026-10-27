@@ -1,0 +1,65 @@
+# cosmwasm-crypto 3.0.9 (CosmWasm/cosmwasm@0c1185b7, packages/crypto) on the RustCrypto 0.14 curve
+# crates. chain/native/Cargo.toml patches it in for the crates.io release of the same version, so
+# libwasmvm links it in place of upstream's. Apache-2.0, as upstream: LICENSE and NOTICE are upstream's.
+#
+# Changed from upstream: k256 and p256 0.14 replace 0.13 (elliptic-curve 0.13 is on crypto-bigint 0.5,
+# RUSTSEC-2026-0387; 0.14 is on crypto-bigint 0.7.6+). src/secp256k1.rs and src/secp256r1.rs verify
+# and recover with the 32-byte hash as a prehash instead of through an identity digest, so
+# src/identity_digest.rs and the direct ecdsa and digest dependencies are gone, and src/lib.rs no
+# longer declares that module. Every other source file is upstream's, byte for byte. Of upstream's
+# tests, the secp256k1 and secp256r1 suites (Wycheproof, rootberg) and the data the unit tests read
+# are kept; the BLS12-381 integration tests and the benchmarks, which cover code this fork does not
+# change, are not. ../cosmwasm-crypto-differential compares this crate with upstream on every ECDSA
+# entry point. `make -C chain native-crypto-test` runs both.
+#
+# Upstream tracks the same move in CosmWasm/cosmwasm#2018. The fork ends when the wasmvm that
+# chain/go.mod requires pins a cosmwasm-crypto release on the 0.14 curve crates.
+[package]
+name = "cosmwasm-crypto"
+version = "3.0.9"
+authors = ["Mauro Lacy <maurolacy@users.noreply.github.com>"]
+description = "Crypto bindings for CosmWasm contracts"
+repository = "https://github.com/CosmWasm/cosmwasm"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+ark-bls12-381 = "0.5.0"
+ark-ec = { version = "0.5.0", features = ["parallel"] }
+ark-ff = { version = "0.5.0", features = ["asm", "parallel"] }
+ark-serialize = "0.5.0"
+cosmwasm-core = "=3.0.9"
+ed25519-zebra = { version = "=4.0.3", default-features = false }
+k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+num-traits = "0.2.18"
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+rand_core = "0.6"
+rayon = "1.9.0"
+sha2 = "0.10"
+thiserror = "1.0.26"
+
+# Not directly used but bumps transitive dependency to avoid <RUSTSEC-2024-0344>
+curve25519-dalek = "4.1.3"
+# Not directly used, but needed to fix a compilation error
+num-bigint = { version = "0.4.2", default-features = false }
+
+[dev-dependencies]
+base64 = "0.22.0"
+base64-serde = "0.7.0"
+digest = "0.10"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1.0.103", default-features = false, features = ["alloc", "derive"] }
+serde_json = "1.0.140"
+sha2 = "0.10"
+sha3 = "0.10"
+hex = { version = "0.4", features = ["serde"] }
+hex-literal = "0.4.1"
+
+[features]
+default = ["std"]
+std = []
+
+# Its own workspace root, so its lock file (the dev-dependencies of the tests) stays out of
+# chain/native's, which carries only what is linked.
+[workspace]

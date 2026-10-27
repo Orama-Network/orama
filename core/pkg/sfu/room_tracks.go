@@ -60,8 +60,8 @@ func (r *Room) BroadcastTrack(sourcePeerID string, track *webrtc.TrackRemote) {
 	var drop func() bool
 	if sourcePeer, ok := r.peers[sourcePeerID]; ok {
 		sourceUserID = sourcePeer.UserID
-		if track.Kind() == webrtc.RTPCodecTypeAudio {
-			drop = sourcePeer.muted.Load
+		if m, ok := mediaOf(track.Kind()); ok {
+			drop = sourcePeer.mutedFlag(m).Load
 		}
 	}
 	r.peersMu.RUnlock()

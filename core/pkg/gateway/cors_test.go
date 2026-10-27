@@ -87,7 +87,7 @@ func TestCORS_allowsTheHeadersTheSDKSendsAndReads(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != corsAllowHeaders {
 		t.Errorf("Allow-Headers = %q", got)
 	}
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After" {
-		t.Errorf("Expose-Headers = %q, want Retry-After", got)
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "Retry-After, Date" {
+		t.Errorf("Expose-Headers = %q, want Retry-After, Date", got)
 	}
 }

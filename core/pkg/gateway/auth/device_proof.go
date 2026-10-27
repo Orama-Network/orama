@@ -46,6 +46,9 @@ const (
 	DeviceProofClaim      = "claim"
 	DeviceProofRevoke     = "revoke"
 	DeviceProofEndSession = "end-session"
+	// DeviceProofLogoutAll ends every session of the account, on every
+	// device; its binding is the device id of the session asking.
+	DeviceProofLogoutAll = "logout-all"
 )
 
 // deviceProofIDPattern is what a proof id may be: enough randomness to be
@@ -57,9 +60,15 @@ var (
 	// the device's proof.
 	ErrDeviceProofRequired = errors.New("this session is bound to a device: send device_proof signed by the device's key")
 
-	// ErrDeviceProofInvalid is a proof that is malformed, out of its window,
-	// already spent, or not signed by the device's key.
-	ErrDeviceProofInvalid = errors.New("the device proof is malformed, stale, already used, or not signed by the device")
+	// ErrDeviceProofInvalid is a proof that is malformed, already spent, or
+	// not signed by the device's key.
+	ErrDeviceProofInvalid = errors.New("the device proof is malformed, already used, or not signed by the device")
+
+	// ErrDeviceProofClockSkew is a proof whose time is outside the window
+	// around this gateway's clock. It is its own refusal because the fix is
+	// the device's clock, not its key: the answer carries the gateway's time,
+	// and a client that stamps its proofs on that time is accepted.
+	ErrDeviceProofClockSkew = errors.New("the device proof's time is outside the window around this gateway's clock")
 )
 
 // DeviceProof is a device's signature over one action.
@@ -107,7 +116,7 @@ func (s *Service) VerifyDeviceProof(ctx context.Context, key *DeviceKey, action,
 	now := time.Now()
 	if skew := now.Sub(time.Unix(p.IssuedAt, 0)); skew > DeviceProofWindow || skew < -DeviceProofWindow {
 		return fmt.Errorf("%w: iat is %s from this gateway's clock, beyond %s",
-			ErrDeviceProofInvalid, skew.Round(time.Second), DeviceProofWindow)
+			ErrDeviceProofClockSkew, skew.Round(time.Second), DeviceProofWindow)
 	}
 	if err := key.Verify(DeviceProofMessage(action, namespace, binding, p.IssuedAt, p.ID), p.Signature); err != nil {
 		return fmt.Errorf("%w: %v", ErrDeviceProofInvalid, err)

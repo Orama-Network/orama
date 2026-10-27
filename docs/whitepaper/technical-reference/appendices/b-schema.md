@@ -272,6 +272,8 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `ios_public_key` | TEXT | yes | `''` |  |
 | `ios_counter` | INTEGER | yes | `0` |  |
 | `attested_at` | TIMESTAMP | yes | - |  |
+| `signing_cert_digests` | TEXT | yes | `'[]'` |  |
+| `os_patch_level` | INTEGER | yes | `0` |  |
 
 ## device_authorizations
 
@@ -415,6 +417,11 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `status` | TEXT | no | - |  |
 | `error_message` | TEXT | no | - |  |
 | `memory_used_mb` | REAL | no | - |  |
+| `node_id` | TEXT | no | - |  |
+| `queue_ms` | INTEGER | no | - |  |
+| `load_ms` | INTEGER | no | - |  |
+| `db_calls` | INTEGER | no | - |  |
+| `db_ms` | INTEGER | no | - |  |
 
 ## function_jobs
 
@@ -1112,6 +1119,7 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `muted` | INTEGER | yes | `0` |  |
 | `created_at` | INTEGER | yes | - |  |
 | `generation` | INTEGER | yes | `0` |  |
+| `video_muted` | INTEGER | yes | `0` |  |
 
 ## webrtc_port_allocations
 

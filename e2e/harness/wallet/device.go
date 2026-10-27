@@ -31,6 +31,7 @@ const (
 	ProofClaim      = "claim"
 	ProofRevoke     = "revoke"
 	ProofEndSession = "end-session"
+	ProofLogoutAll  = "logout-all"
 )
 
 const (

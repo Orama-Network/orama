@@ -59,8 +59,13 @@ func TestEngine_HostModule_WebRTCCallsExported(t *testing.T) {
 		"webrtc_admit": {[]api.ValueType{i32, i32, i32, i32, i32, i32, i64}, []api.ValueType{i64}},
 		// (room ptr, len, user ptr, len) -> 1 done, 0 failed
 		"webrtc_kick": {[]api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32}},
+		// (room ptr, len, user ptr, len, device ptr, len) -> 1 done, 0 failed
+		"webrtc_kick_device": {[]api.ValueType{i32, i32, i32, i32, i32, i32}, []api.ValueType{i32}},
 		// (room ptr, len, user ptr, len, muted) -> 1 done, 0 failed
-		"webrtc_mute": {[]api.ValueType{i32, i32, i32, i32, i32}, []api.ValueType{i32}},
+		"webrtc_mute":       {[]api.ValueType{i32, i32, i32, i32, i32}, []api.ValueType{i32}},
+		"webrtc_mute_video": {[]api.ValueType{i32, i32, i32, i32, i32}, []api.ValueType{i32}},
+		// (room ptr, len, user ptr, len, device ptr, len) -> ptr<<32|len of the JSON, 0 on failure
+		"webrtc_admission": {[]api.ValueType{i32, i32, i32, i32, i32, i32}, []api.ValueType{i64}},
 	}
 	for _, module := range []string{"env", "host", "orama"} {
 		fns := engine.runtime.Module(module).ExportedFunctionDefinitions()

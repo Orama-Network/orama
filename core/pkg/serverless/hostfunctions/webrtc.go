@@ -10,14 +10,16 @@ import (
 	"github.com/Orama-Network/orama/core/pkg/serverless"
 )
 
-// WebRTC admission and moderation (bugboard #726): a namespace that requires
-// admission lets a user into a room only after one of its functions admitted
-// them; a function can later remove or mute them. The admissions live in the
-// namespace's own database and the kick and mute reach the SFU that holds the
-// room (pkg/gateway/handlers/webrtc/control.go).
+// WebRTC admission and moderation (bugboard #726, feat-964): a namespace that
+// requires admission lets a user, or one device of theirs, into a room only
+// after one of its functions admitted them; a function can later remove the
+// user or one device, mute their audio or their video, and read what a device
+// holds. The admissions live in the namespace's own database and the kicks and
+// mutes reach the SFUs that hold the rooms (pkg/gateway/handlers/webrtc/control.go).
 
-// maxWebRTCCallsPerInvocation caps how many webrtc_admit, webrtc_kick and
-// webrtc_mute calls one function invocation (or persistent WS frame) may make.
+// maxWebRTCCallsPerInvocation caps how many webrtc_* control calls (admit,
+// kick, kick_device, mute, mute_video, admission) one function invocation (or
+// persistent WS frame) may make.
 // Like maxPublishesPerInvocation it is a safety bound and not a normal-path
 // limit: each call writes the namespace's database and, for a kick or a mute,
 // calls every SFU of the namespace, and the WASM runtime has no fuel metering,
@@ -91,6 +93,20 @@ func (h *HostFunctions) WebRTCKick(ctx context.Context, room, user string) error
 	return nil
 }
 
+// WebRTCKickDevice revokes the admission of one device of user to room and
+// closes that device's connection. device is a session's device id, as
+// get_caller_device_id returns it.
+func (h *HostFunctions) WebRTCKickDevice(ctx context.Context, room, user, device string) error {
+	ns, c, err := h.webrtcNamespace(ctx, "webrtc_kick_device")
+	if err != nil {
+		return err
+	}
+	if err := c.KickDevice(ctx, ns, room, user, device); err != nil {
+		return &serverless.HostFunctionError{Function: "webrtc_kick_device", Cause: err}
+	}
+	return nil
+}
+
 // WebRTCMute stops (or resumes) the forwarding of user's audio in room.
 func (h *HostFunctions) WebRTCMute(ctx context.Context, room, user string, muted bool) error {
 	ns, c, err := h.webrtcNamespace(ctx, "webrtc_mute")
@@ -101,4 +117,48 @@ func (h *HostFunctions) WebRTCMute(ctx context.Context, room, user string, muted
 		return &serverless.HostFunctionError{Function: "webrtc_mute", Cause: err}
 	}
 	return nil
+}
+
+// WebRTCMuteVideo stops (or resumes) the forwarding of user's video, camera and
+// screen, in room. Their audio is webrtc_mute's.
+func (h *HostFunctions) WebRTCMuteVideo(ctx context.Context, room, user string, muted bool) error {
+	ns, c, err := h.webrtcNamespace(ctx, "webrtc_mute_video")
+	if err != nil {
+		return err
+	}
+	if err := c.MuteVideo(ctx, ns, room, user, muted); err != nil {
+		return &serverless.HostFunctionError{Function: "webrtc_mute_video", Cause: err}
+	}
+	return nil
+}
+
+// WebRTCAdmission returns what the namespace has on record for device ("": a
+// session bound to no device) of user in room, as JSON {"room","user_id",
+// "device_id","admitted","revoked","expired","muted","video_muted",
+// "expires_at"}: admitted is whether a join from that device is let in when
+// the namespace requires admission.
+func (h *HostFunctions) WebRTCAdmission(ctx context.Context, room, user, device string) (string, error) {
+	ns, c, err := h.webrtcNamespace(ctx, "webrtc_admission")
+	if err != nil {
+		return "", err
+	}
+	a, err := c.AdmissionOf(ctx, ns, room, user, device)
+	if err != nil {
+		return "", &serverless.HostFunctionError{Function: "webrtc_admission", Cause: err}
+	}
+	out, err := json.Marshal(struct {
+		Room       string `json:"room"`
+		UserID     string `json:"user_id"`
+		DeviceID   string `json:"device_id"`
+		Admitted   bool   `json:"admitted"`
+		Revoked    bool   `json:"revoked"`
+		Expired    bool   `json:"expired"`
+		Muted      bool   `json:"muted"`
+		VideoMuted bool   `json:"video_muted"`
+		ExpiresAt  int64  `json:"expires_at"`
+	}{room, user, device, a.Admitted, a.Revoked, a.Expired, a.Muted, a.VideoMuted, a.ExpiresAt})
+	if err != nil {
+		return "", &serverless.HostFunctionError{Function: "webrtc_admission", Cause: fmt.Errorf("failed to encode the admission: %w", err)}
+	}
+	return string(out), nil
 }

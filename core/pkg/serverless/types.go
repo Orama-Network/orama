@@ -142,19 +142,26 @@ type FunctionRegistry interface {
 // `orama function logs`. Mirrors registry.Invocation; defined here at the
 // public package boundary so callers don't need to import the inner package.
 type Invocation struct {
-	ID           string     `json:"id"`
-	RequestID    string     `json:"request_id"`
-	TriggerType  string     `json:"trigger_type"`
-	CallerWallet string     `json:"caller_wallet,omitempty"`
-	InputSize    int        `json:"input_size"`
-	OutputSize   int        `json:"output_size"`
-	StartedAt    time.Time  `json:"started_at"`
-	CompletedAt  time.Time  `json:"completed_at"`
-	DurationMS   int64      `json:"duration_ms"`
-	Status       string     `json:"status"`
-	ErrorMessage string     `json:"error_message,omitempty"`
-	MemoryUsedMB float64    `json:"memory_used_mb,omitempty"`
-	WASMLogs     []LogEntry `json:"wasm_logs,omitempty"`
+	ID           string    `json:"id"`
+	RequestID    string    `json:"request_id"`
+	TriggerType  string    `json:"trigger_type"`
+	CallerWallet string    `json:"caller_wallet,omitempty"`
+	InputSize    int       `json:"input_size"`
+	OutputSize   int       `json:"output_size"`
+	StartedAt    time.Time `json:"started_at"`
+	CompletedAt  time.Time `json:"completed_at"`
+	DurationMS   int64     `json:"duration_ms"`
+	Status       string    `json:"status"`
+	ErrorMessage string    `json:"error_message,omitempty"`
+	MemoryUsedMB float64   `json:"memory_used_mb,omitempty"`
+	// Where duration_ms went (bug-963; InvocationRecord). Zero and empty on
+	// records written before migration 096.
+	NodeID   string     `json:"node_id,omitempty"`
+	QueueMS  int64      `json:"queue_ms"`
+	LoadMS   int64      `json:"load_ms"`
+	DBCalls  int64      `json:"db_calls"`
+	DBMS     int64      `json:"db_ms"`
+	WASMLogs []LogEntry `json:"wasm_logs,omitempty"`
 }
 
 // FunctionExecutor handles the actual execution of WASM functions.
@@ -789,6 +796,10 @@ type HostServices interface {
 	// GetCallerAttestation returns what the caller's device attestation
 	// proved, as JSON, or empty when the caller's token carries none.
 	GetCallerAttestation(ctx context.Context) string
+	// GetCallerAttestationVerdict returns the gateway's verdict on the
+	// caller under the namespace's attestation policy as it is now, as JSON
+	// (AttestationVerdict), or empty outside a gateway.
+	GetCallerAttestationVerdict(ctx context.Context) string
 	// GetCallerCapability returns what the caller's capability grants, as
 	// JSON, or empty when the caller came in on a credential.
 	GetCallerCapability(ctx context.Context) string
@@ -809,8 +820,18 @@ type HostServices interface {
 	WebRTCAdmit(ctx context.Context, room, user, device string, ttl time.Duration) (string, error)
 	// WebRTCKick revokes user's admissions to room and closes their connection.
 	WebRTCKick(ctx context.Context, room, user string) error
+	// WebRTCKickDevice revokes the admission of one device of user to room and
+	// closes that device's connection; the user's other devices stay.
+	WebRTCKickDevice(ctx context.Context, room, user, device string) error
 	// WebRTCMute stops (or resumes) the forwarding of user's audio in room.
 	WebRTCMute(ctx context.Context, room, user string, muted bool) error
+	// WebRTCMuteVideo stops (or resumes) the forwarding of user's video
+	// (camera and screen) in room, apart from their audio.
+	WebRTCMuteVideo(ctx context.Context, room, user string, muted bool) error
+	// WebRTCAdmission returns what the namespace has on record for device of
+	// user in room, as JSON {"room","user_id","device_id","admitted","revoked",
+	// "expired","muted","video_muted","expires_at"}.
+	WebRTCAdmission(ctx context.Context, room, user, device string) (string, error)
 
 	// Job operations
 	EnqueueBackground(ctx context.Context, functionName string, payload []byte) (string, error)
@@ -845,7 +866,25 @@ type DeployResult struct {
 type WebRTCController interface {
 	Admit(ctx context.Context, namespace, room, user, device string, ttl time.Duration) (time.Time, error)
 	Kick(ctx context.Context, namespace, room, user string) error
+	KickDevice(ctx context.Context, namespace, room, user, device string) error
 	Mute(ctx context.Context, namespace, room, user string, muted bool) error
+	MuteVideo(ctx context.Context, namespace, room, user string, muted bool) error
+	AdmissionOf(ctx context.Context, namespace, room, user, device string) (WebRTCAdmission, error)
+}
+
+// WebRTCAdmission is what a namespace has on record for one device of a user
+// in one room, judged as a join from that device is when the namespace
+// requires admission.
+type WebRTCAdmission struct {
+	// Admitted is set when a join from the device would be let in.
+	Admitted bool
+	// Revoked and Expired say why it would not; neither is set when the
+	// namespace never admitted the device (or the user from every device).
+	Revoked, Expired bool
+	// Muted and VideoMuted are the user's forced mutes in the room.
+	Muted, VideoMuted bool
+	// ExpiresAt is the unix second the admission ends, 0 when not admitted.
+	ExpiresAt int64
 }
 
 // CallerAttestation is what a caller's device attestation proved (feat-941):
@@ -862,4 +901,54 @@ type CallerAttestation struct {
 	AppVersion string `json:"app_version"`
 	// AttestedAt is when the device last attested, unix seconds.
 	AttestedAt int64 `json:"attested_at"`
+	// Development marks an iOS key of the App Attest development environment.
+	Development bool `json:"development,omitempty"`
+	// GrapheneOS marks an Android device booting GrapheneOS.
+	GrapheneOS bool `json:"grapheneos,omitempty"`
+	// SigningCertDigests are the lowercase-hex SHA-256 digests of the
+	// certificates the attested Android app is signed with.
+	SigningCertDigests []string `json:"signing_cert_digests,omitempty"`
+	// OSPatchLevel is the Android OS security patch level the device
+	// attested (YYYYMM), 0 when it attested none.
+	OSPatchLevel int `json:"os_patch_level,omitempty"`
 }
+
+// AttestationVerdict is the gateway's verdict on a caller under its
+// namespace's attestation policy as the policy is when the function asks
+// (feat-965), in every mode: monitor refuses nothing at the gateway, but a
+// function reads here what enforcing would decide. Read via host fn
+// `get_caller_attestation_verdict`.
+type AttestationVerdict struct {
+	// Mode is the namespace's attestation mode: off, monitor or enforce;
+	// empty when the verdict is VerdictUnavailable.
+	Mode string `json:"mode,omitempty"`
+	// Verdict is one of the Verdict* values.
+	Verdict string `json:"verdict"`
+	// Reason names the check that refused an invalid attestation or an old
+	// build ("signing_cert", "package", "boot_key", "app_version", …); empty
+	// otherwise.
+	Reason string `json:"reason,omitempty"`
+	// Message says why, in words; empty when the caller is admitted.
+	Message string `json:"message,omitempty"`
+}
+
+// The verdicts of AttestationVerdict.
+const (
+	// VerdictAdmitted: the policy admits the caller now.
+	VerdictAdmitted = "admitted"
+	// VerdictAttestationRequired: the caller has not attested, or must
+	// attest again — its Android attestation is past the re-attestation
+	// interval, or does not show what the policy now asks.
+	VerdictAttestationRequired = "attestation_required"
+	// VerdictAppUpdateRequired: the build is older than the policy admits.
+	VerdictAppUpdateRequired = "app_update_required"
+	// VerdictAttestationInvalid: the attestation is of something the policy
+	// does not admit (Reason says which check).
+	VerdictAttestationInvalid = "attestation_invalid"
+	// VerdictNotConfigured: the namespace's mode is off; there is no app to
+	// judge against, and no caller is admitted as attested.
+	VerdictNotConfigured = "not_configured"
+	// VerdictUnavailable: the gateway cannot read the namespace's policy
+	// right now. Retry; it says nothing about the caller.
+	VerdictUnavailable = "unavailable"
+)

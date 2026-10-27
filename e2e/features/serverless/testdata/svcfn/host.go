@@ -82,6 +82,9 @@ func functionInvoke(np, nn, pp, pn uint32) uint64
 //go:wasmimport env function_invoke_last_error
 func functionInvokeLastError() uint64
 
+//go:wasmimport env ws_send
+func wsSend(cp, cn, dp, dn uint32) uint32
+
 //go:wasmimport host log_info
 func logInfo(p, n uint32)
 

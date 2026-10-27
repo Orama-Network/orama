@@ -148,6 +148,10 @@ type Verdict struct {
 	BootKey   []byte
 	// GrapheneOS is true when BootKey is on GrapheneOS's signed list.
 	GrapheneOS bool
+	// SigningCertDigests are the lowercase-hex SHA-256 digests of the
+	// certificates the attested app is signed with, every one of them in
+	// the policy's AndroidSigningCertDigests when the proof was accepted.
+	SigningCertDigests []string
 	// OSPatchLevel is YYYYMM; VendorPatchLevel and BootPatchLevel are
 	// YYYYMMDD, 0 when the device does not attest them.
 	OSPatchLevel     int

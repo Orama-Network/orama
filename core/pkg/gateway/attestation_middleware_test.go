@@ -48,7 +48,8 @@ func appRequest(method, path string, claims *gwauth.JWTClaims, scopes string) *h
 
 func attestedClaims(version string) *gwauth.JWTClaims {
 	return &gwauth.JWTClaims{Sub: "0x00000000000000000000000000000000000000aa", Namespace: "anchat", Did: "device-1",
-		Att: &gwauth.AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: version, AttestedAt: time.Now().Unix()}}
+		Att: &gwauth.AttestationClaim{Platform: "android", AppID: "chat.anchat", AppVersion: version,
+			SigningCertDigests: []string{attestTestDigest}, AttestedAt: time.Now().Unix()}}
 }
 
 // serveAttested runs one request through the middleware and reports the
@@ -104,6 +105,19 @@ func TestAttestationMiddleware_enforceRefusesTheUnattested(t *testing.T) {
 	}
 	if n := attestationCount(g, CodeAppUpdateRequired, "android", "enforce"); n != 1 {
 		t.Errorf("the old build was counted %d times", n)
+	}
+
+	// feat-965: an app signed with a certificate the policy does not name is
+	// refused by name, and a token that records no certificate attests again.
+	resigned := attestedClaims("412")
+	resigned.Att.SigningCertDigests = []string{"ab" + attestTestDigest[2:]}
+	if status, code, _ := serveAttested(g, appRequest(http.MethodPost, "/v1/functions/rpc/invoke", resigned, "")); status != http.StatusForbidden || code != CodeAttestationInvalid {
+		t.Errorf("a certificate the policy does not name: %d %s, want 403 %s", status, code, CodeAttestationInvalid)
+	}
+	unrecorded := attestedClaims("412")
+	unrecorded.Att.SigningCertDigests = nil
+	if status, code, _ := serveAttested(g, appRequest(http.MethodPost, "/v1/functions/rpc/invoke", unrecorded, "")); status != http.StatusForbidden || code != CodeAttestationRequired {
+		t.Errorf("a token that records no certificate: %d %s, want 403 %s", status, code, CodeAttestationRequired)
 	}
 }
 

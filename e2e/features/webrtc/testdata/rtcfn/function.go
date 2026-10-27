@@ -1,7 +1,9 @@
 // Command function is the WebRTC fixture the webrtc feature deploys with
-// `orama function deploy`: TinyGo, WASI, stateless. It admits a user to a room,
-// kicks one and mutes one through the webrtc_* host calls, and reports what the
-// host answered.
+// `orama function deploy`: TinyGo, WASI, stateless. It admits a user (or one
+// device of theirs) to a room, kicks a user or one device, mutes a user's audio
+// or video, reads a device's admission through the webrtc_* host calls, and
+// reports the caller's device id as an application records it when its device
+// registers.
 package main
 
 import (
@@ -17,8 +19,20 @@ func webrtcAdmit(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlS
 //go:wasmimport env webrtc_kick
 func webrtcKick(roomPtr, roomLen, userPtr, userLen uint32) uint32
 
+//go:wasmimport env webrtc_kick_device
+func webrtcKickDevice(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32) uint32
+
 //go:wasmimport env webrtc_mute
 func webrtcMute(roomPtr, roomLen, userPtr, userLen, muted uint32) uint32
+
+//go:wasmimport env webrtc_mute_video
+func webrtcMuteVideo(roomPtr, roomLen, userPtr, userLen, muted uint32) uint32
+
+//go:wasmimport env webrtc_admission
+func webrtcAdmission(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32) uint64
+
+//go:wasmimport env get_caller_device_id
+func getCallerDeviceID() uint64
 
 type request struct {
 	Op     string `json:"op"`
@@ -40,26 +54,42 @@ func main() {
 		reply(map[string]any{"error": "input is not JSON: " + err.Error()})
 		return
 	}
+	room, user, device := req.Room, req.User, req.Device
 	switch req.Op {
 	case "admit":
-		admitted := unpack(webrtcAdmit(ptr(req.Room), uint32(len(req.Room)), ptr(req.User), uint32(len(req.User)),
-			ptr(req.Device), uint32(len(req.Device)), req.TTL))
+		admitted := unpack(webrtcAdmit(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), ptr(device), uint32(len(device)), req.TTL))
 		if admitted == "" {
 			reply(map[string]any{"error": "admit refused"})
 			return
 		}
 		os.Stdout.Write([]byte(admitted))
-	case "kick":
-		reply(map[string]any{"done": webrtcKick(ptr(req.Room), uint32(len(req.Room)), ptr(req.User), uint32(len(req.User))) == 1})
-	case "mute":
-		var m uint32
-		if req.Muted {
-			m = 1
+	case "admission":
+		admission := unpack(webrtcAdmission(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), ptr(device), uint32(len(device))))
+		if admission == "" {
+			reply(map[string]any{"error": "admission read refused"})
+			return
 		}
-		reply(map[string]any{"done": webrtcMute(ptr(req.Room), uint32(len(req.Room)), ptr(req.User), uint32(len(req.User)), m) == 1})
+		os.Stdout.Write([]byte(admission))
+	case "whoami":
+		reply(map[string]any{"device_id": unpack(getCallerDeviceID())})
+	case "kick":
+		reply(map[string]any{"done": webrtcKick(ptr(room), uint32(len(room)), ptr(user), uint32(len(user))) == 1})
+	case "kick_device":
+		reply(map[string]any{"done": webrtcKickDevice(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), ptr(device), uint32(len(device))) == 1})
+	case "mute":
+		reply(map[string]any{"done": webrtcMute(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), flag(req.Muted)) == 1})
+	case "mute_video":
+		reply(map[string]any{"done": webrtcMuteVideo(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), flag(req.Muted)) == 1})
 	default:
 		reply(map[string]any{"error": "unknown op " + req.Op})
 	}
+}
+
+func flag(b bool) uint32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func reply(v map[string]any) {

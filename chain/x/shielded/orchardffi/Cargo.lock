@@ -773,6 +773,7 @@ name = "orama-orchard-ffi"
 version = "0.1.0"
 dependencies = [
  "incrementalmerkletree",
+ "nonempty",
  "orchard",
  "rand",
  "sha2 0.10.9",

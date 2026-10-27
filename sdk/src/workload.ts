@@ -10,8 +10,13 @@ import { SDKError } from "./errors";
  * and it renews that token with the gateway before it expires.
  *
  * ```ts
+ * import { createWorkloadClient } from "@orama-network/orama/workload";
  * const client = await createWorkloadClient();
  * ```
+ *
+ * It is its own entry, not part of the default one: its default token reader
+ * imports `node:fs/promises`, and Metro (React Native) resolves dynamic
+ * imports too, so it would fail every app's bundle.
  *
  * There is nothing to configure: the gateway's URL, the namespace and the token
  * all come from the environment the platform set up.

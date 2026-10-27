@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	authsvc "github.com/Orama-Network/orama/core/pkg/gateway/auth"
 )
@@ -70,6 +72,7 @@ func TestWriteDeviceRefusal_saysWhichDeviceProblemItIs(t *testing.T) {
 		authsvc.ErrDevicePending:          {http.StatusForbidden, ErrCodeDevicePending},
 		authsvc.ErrDeviceProofRequired:    {http.StatusUnauthorized, ErrCodeDeviceProofRequired},
 		authsvc.ErrDeviceProofInvalid:     {http.StatusUnauthorized, ErrCodeDeviceProofInvalid},
+		authsvc.ErrDeviceProofClockSkew:   {http.StatusUnauthorized, ErrCodeDeviceProofClockSkew},
 		authsvc.ErrDeviceKeyInvalid:       {http.StatusBadRequest, ErrCodeDeviceKeyInvalid},
 		authsvc.ErrDeviceBelongsToAnother: {http.StatusForbidden, ErrCodeDeviceKeyTaken},
 		authsvc.ErrDeviceNotFound:         {http.StatusNotFound, ErrCodeDeviceNotFound},
@@ -84,6 +87,30 @@ func TestWriteDeviceRefusal_saysWhichDeviceProblemItIs(t *testing.T) {
 		if rec.Code != want.status || body["code"] != want.code || body["hint"] == "" {
 			t.Errorf("%v: %d %v, want %d %s with a hint", err, rec.Code, body, want.status, want.code)
 		}
+	}
+	if writeDeviceRefusal(httptest.NewRecorder(), errors.New("database down")) {
+		t.Error("an unrelated error was answered as a device refusal")
+	}
+}
+
+// A proof refused for its time carries the gateway's clock, which is what the
+// device stamps its next proof on; no other refusal does.
+func TestWriteDeviceRefusal_aClockRefusalCarriesTheGatewaysTime(t *testing.T) {
+	rec := httptest.NewRecorder()
+	before := time.Now().Unix()
+	writeDeviceRefusal(rec, fmt.Errorf("%w: iat is 10m0s from this gateway's clock", authsvc.ErrDeviceProofClockSkew))
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	got, ok := body["server_time"].(float64)
+	if !ok || int64(got) < before || int64(got) > time.Now().Unix() {
+		t.Errorf("server_time = %v, want the gateway's unix time", body["server_time"])
+	}
+	rec = httptest.NewRecorder()
+	writeDeviceRefusal(rec, authsvc.ErrDeviceProofInvalid)
+	var invalid map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &invalid)
+	if _, has := invalid["server_time"]; has {
+		t.Error("an invalid proof's refusal carries server_time")
 	}
 	if writeDeviceRefusal(httptest.NewRecorder(), errors.New("database down")) {
 		t.Error("an unrelated error was answered as a device refusal")

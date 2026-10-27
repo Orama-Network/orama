@@ -1,15 +1,25 @@
 import { HttpClient } from "../core/http";
 import { Logger } from "../core/logger";
-import { AuthError, LogoutError, SDKError } from "../errors";
+import { AuthCode, AuthError, LogoutError, SDKError } from "../errors";
 import { WhoAmI, StorageAdapter, MemoryStorage } from "./types";
 import {
   DeviceInfo,
   DeviceLink,
+  DeviceProof,
+  DeviceProofAction,
   DeviceSigner,
   PendingDeviceApproval,
   makeDeviceProof,
   normalizeUserCode,
 } from "./device";
+import {
+  AndroidAttestation,
+  AppAttestAssertionProvider,
+  AttestationChallenge,
+  AttestationResult,
+  IOSAttestation,
+  attestationBinding,
+} from "./attestation";
 
 /** Where the id of the device the stored session is bound to is kept. */
 const DEVICE_ID_KEY = "deviceId";
@@ -26,6 +36,14 @@ interface SessionResponse {
   token_type?: string;
 }
 
+/** What an attest call answers: the session's new access token, carrying the attestation. */
+export interface AttestedSession {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  attestation: AttestationResult;
+}
+
 /** What to clear, and whether to tell the gateway. */
 export interface LogoutOptions {
   /**
@@ -39,6 +57,14 @@ export interface LogoutOptions {
    * Default: true. Set it to false to reset local state only.
    */
   server?: boolean;
+  /**
+   * End every session of the account, on every device, not only this one.
+   * From a session bound to a device the device signs for it (the device
+   * signer must be set), as it does to revoke a device: an access token
+   * lifted off one phone must not sign the account out of all the others.
+   * A session bound to no device always ends them all. Default: false.
+   */
+  all?: boolean;
 }
 
 export class AuthClient {
@@ -47,6 +73,7 @@ export class AuthClient {
   private currentApiKey?: string;
   private currentJwt?: string;
   private deviceSigner?: DeviceSigner;
+  private appAttestAssertion?: AppAttestAssertionProvider;
   private readonly log: Logger;
 
   constructor(config: {
@@ -99,6 +126,19 @@ export class AuthClient {
    */
   setDeviceSigner(signer: DeviceSigner | undefined): void {
     this.deviceSigner = signer;
+  }
+
+  /**
+   * On iOS, in a namespace that attests: make the App Attest assertion each
+   * refresh carries. The gateway carries an iOS device's attestation into a
+   * refreshed token only against a fresh assertion over that refresh's proof,
+   * which only the platform can make, and only once the proof's id is known;
+   * the SDK asks for it each time it makes a refresh proof and sends it as
+   * `device_proof.app_attest`. Android carries its attestation forward with no
+   * input, so an Android app sets none.
+   */
+  setAppAttestAssertion(provider: AppAttestAssertionProvider | undefined): void {
+    this.appAttestAssertion = provider;
   }
 
   /**
@@ -197,23 +237,22 @@ export class AuthClient {
     }
     const namespace = (await this.storage.get("namespace")) ?? "default";
 
-    // A session bound to a device is refreshed by the device: the gateway
-    // refuses the refresh token alone.
-    const body: Record<string, unknown> = { refresh_token: refreshToken, namespace };
-    if (await this.storage.get(DEVICE_ID_KEY)) {
-      body.device_proof = await makeDeviceProof(
-        this.requireDeviceSigner("refresh"), "refresh", namespace, refreshToken
-      );
-    }
-
-    const response = await this.httpClient.post<{
+    interface RefreshResponse {
       access_token: string;
       refresh_token?: string;
       expires_in?: number;
       subject?: string;
       namespace?: string;
       token_type?: string;
-    }>("/v1/auth/refresh", body);
+    }
+    const body = { refresh_token: refreshToken, namespace };
+    // A session bound to a device is refreshed by the device: the gateway
+    // refuses the refresh token alone.
+    const response = (await this.storage.get(DEVICE_ID_KEY))
+      ? await this.sendWithProof("refresh", namespace, refreshToken, (device_proof) =>
+          this.httpClient.post<RefreshResponse>("/v1/auth/refresh", { ...body, device_proof })
+        )
+      : await this.httpClient.post<RefreshResponse>("/v1/auth/refresh", body);
 
     if (!response?.access_token) {
       throw new Error("refresh failed: server returned no access_token");
@@ -250,16 +289,15 @@ export class AuthClient {
    * valid on the gateway until they expire.
    */
   async logout(options: LogoutOptions = {}): Promise<void> {
-    const { keepApiKey = false, server = true } = options;
+    const { keepApiKey = false, server = true, all = false } = options;
 
     // Only a JWT has a server-side session; an API key has nothing to end.
     let serverError: SDKError | undefined;
     if (server && this.currentJwt) {
-      const body = await this.logoutBody();
       try {
-        await this.httpClient.post("/v1/auth/logout", body);
+        await this.endSessionOnGateway(all);
       } catch (error) {
-        // HttpClient raises nothing but SDKError.
+        // HttpClient and the device proof raise nothing but SDKError.
         serverError = error as SDKError;
       }
     }
@@ -433,18 +471,32 @@ export class AuthClient {
   }
 
   /**
-   * What logging out ends. A session bound to a device ends that device's
-   * session and nothing else — logging out on one phone must not sign the
-   * account out of the others. A session bound to none ends all of them, as
-   * it always has.
+   * Tell the gateway what logging out ends. A session bound to a device ends
+   * that device's session and nothing else — logging out on one phone must not
+   * sign the account out of the others — unless `all` is asked for, which the
+   * device signs (`logout-all`, over its own id). A session bound to none ends
+   * all of them, as it always has.
    */
-  private async logoutBody(): Promise<Record<string, unknown>> {
+  private async endSessionOnGateway(all: boolean): Promise<void> {
+    const deviceId = await this.storage.get(DEVICE_ID_KEY);
     const refreshToken = await this.storage.get("refreshToken");
-    if ((await this.storage.get(DEVICE_ID_KEY)) && refreshToken) {
-      const namespace = (await this.storage.get("namespace")) ?? "default";
-      return { refresh_token: refreshToken, namespace };
+    const namespace = (await this.storage.get("namespace")) ?? "default";
+    if (!deviceId) {
+      await this.httpClient.post("/v1/auth/logout", { all: true });
+      return;
     }
-    return { all: true };
+    if (!all && refreshToken) {
+      await this.httpClient.post("/v1/auth/logout", { refresh_token: refreshToken, namespace });
+      return;
+    }
+    await this.sendWithProof("logout-all", namespace, deviceId, (device_proof) =>
+      this.httpClient.post("/v1/auth/logout", {
+        all: true,
+        namespace,
+        ...(refreshToken ? { refresh_token: refreshToken } : {}),
+        device_proof,
+      })
+    );
   }
 
   /** The calling account's devices, revoked ones included. */
@@ -461,14 +513,15 @@ export class AuthClient {
   async revokeDevice(deviceId: string): Promise<void> {
     // From a device-bound session the device signs the revocation: a lifted
     // access token alone must not sign the account out of its other devices.
-    const body: Record<string, unknown> = {};
-    if (await this.storage.get(DEVICE_ID_KEY)) {
-      const namespace = (await this.storage.get("namespace")) ?? "default";
-      body.device_proof = await makeDeviceProof(
-        this.requireDeviceSigner("revoke"), "revoke", namespace, deviceId
-      );
+    const path = `/v1/auth/devices/${encodeURIComponent(deviceId)}`;
+    if (!(await this.storage.get(DEVICE_ID_KEY))) {
+      await this.httpClient.request("DELETE", path, { body: {} });
+      return;
     }
-    await this.httpClient.request("DELETE", `/v1/auth/devices/${encodeURIComponent(deviceId)}`, { body });
+    const namespace = (await this.storage.get("namespace")) ?? "default";
+    await this.sendWithProof("revoke", namespace, deviceId, (device_proof) =>
+      this.httpClient.request("DELETE", path, { body: { device_proof } })
+    );
   }
 
   /**
@@ -478,8 +531,9 @@ export class AuthClient {
   async approveDeviceLink(userCode: string): Promise<void> {
     const namespace = (await this.storage.get("namespace")) ?? "default";
     const code = normalizeUserCode(userCode);
-    const proof = await makeDeviceProof(this.requireDeviceSigner("approve"), "approve", namespace, code);
-    await this.httpClient.post("/v1/auth/devices/approve", { user_code: code, device_proof: proof });
+    await this.sendWithProof("approve", namespace, code, (device_proof) =>
+      this.httpClient.post("/v1/auth/devices/approve", { user_code: code, device_proof })
+    );
   }
 
   /**
@@ -502,12 +556,118 @@ export class AuthClient {
    * nobody has approved it yet the gateway answers `authorization_pending`.
    */
   async claimDeviceLink(deviceCode: string, namespace: string): Promise<SessionResponse> {
-    const proof = await makeDeviceProof(this.requireDeviceSigner("claim"), "claim", namespace, deviceCode);
-    const response = await this.httpClient.post<SessionResponse>("/v1/auth/device/token", {
-      device_code: deviceCode,
-      device_proof: proof,
-    });
+    const response = await this.sendWithProof("claim", namespace, deviceCode, (device_proof) =>
+      this.httpClient.post<SessionResponse>("/v1/auth/device/token", {
+        device_code: deviceCode,
+        device_proof,
+      })
+    );
     await this.storeSession(response);
+    return response;
+  }
+
+  /**
+   * Send a request carrying a device proof, stamped on the gateway's clock.
+   *
+   * The proof's time is the gateway's as this client last saw it (every
+   * answer's `Date` header), so a phone whose own clock is minutes off still
+   * proves inside the gateway's window. When nothing has been heard from the
+   * gateway yet, the first proof goes on the device's clock; if the gateway
+   * refuses it for its time it answers with its own (`server_time`), and the
+   * proof is made again on that clock and sent once more. That is the
+   * refusal's purpose, as DPoP's `use_dpop_nonce` hands a client the nonce to
+   * use: a fresh proof with a new id, never the refused one replayed.
+   */
+  private async sendWithProof<T>(
+    action: DeviceProofAction,
+    namespace: string,
+    binding: string,
+    send: (proof: DeviceProof) => Promise<T>
+  ): Promise<T> {
+    const signer = this.requireDeviceSigner(action);
+    const prove = async () => {
+      const proof = await makeDeviceProof(signer, action, namespace, binding, this.httpClient.serverNow());
+      if (action === "refresh") {
+        await this.attachAppAttest(proof);
+      }
+      return proof;
+    };
+    try {
+      return await send(await prove());
+    } catch (error) {
+      const serverTime =
+        error instanceof SDKError && error.code === AuthCode.DeviceProofClockSkew
+          ? error.details?.server_time
+          : undefined;
+      if (typeof serverTime !== "number") {
+        throw error;
+      }
+      this.httpClient.observeServerTime(serverTime * 1000);
+      return send(await prove());
+    }
+  }
+
+  /** Add the app's App Attest assertion over this refresh proof, when it makes one. */
+  private async attachAppAttest(proof: DeviceProof): Promise<void> {
+    const deviceId = await this.storage.get(DEVICE_ID_KEY);
+    if (!this.appAttestAssertion || !deviceId) {
+      return;
+    }
+    const assertion = await this.appAttestAssertion({
+      proofId: proof.id,
+      deviceId,
+      clientDataHash: await attestationBinding(proof.id, deviceId),
+    });
+    if (assertion) {
+      proof.app_attest = assertion;
+    }
+  }
+
+  /**
+   * A single-use attestation challenge for this session's device. The session
+   * must be bound to a device. The platform attests over
+   * `attestationBinding(challenge, device_id)`.
+   */
+  async attestChallenge(): Promise<AttestationChallenge> {
+    return this.httpClient.post<AttestationChallenge>("/v1/attest/challenge", {});
+  }
+
+  /**
+   * Attest this session's device with App Attest. On success the session's
+   * token is the one the gateway answers with, which carries the attestation:
+   * every request after this, and the token handed out for a WebSocket, use it.
+   * Set an assertion provider (`setAppAttestAssertion`) so refreshes keep it.
+   */
+  async attestIOS(params: IOSAttestation): Promise<AttestedSession> {
+    return this.storeAttested(
+      await this.httpClient.post<AttestedSession>("/v1/attest/ios", {
+        challenge: params.challenge,
+        key_id: params.keyId,
+        attestation: params.attestation,
+      })
+    );
+  }
+
+  /**
+   * Attest this session's device with an Android key-attestation chain. On
+   * success the session's token is the attested one, as for `attestIOS`; the
+   * gateway carries it into every refresh with no further input.
+   */
+  async attestAndroid(params: AndroidAttestation): Promise<AttestedSession> {
+    return this.storeAttested(
+      await this.httpClient.post<AttestedSession>("/v1/attest/android", {
+        challenge: params.challenge,
+        chain: params.chain,
+      })
+    );
+  }
+
+  /** Make the attested token the session's own. */
+  private storeAttested(response: AttestedSession): AttestedSession {
+    if (!response?.access_token) {
+      throw new SDKError("the gateway accepted the attestation and returned no token", 500, "ATTESTATION_NO_TOKEN");
+    }
+    this.setJwt(response.access_token);
     return response;
   }
 

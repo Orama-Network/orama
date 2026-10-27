@@ -55,7 +55,7 @@ A `PUT` carries the fields it changes. The resulting policy is validated whole b
 | `android.max_patch_age_months` | Refuse an OS whose security patch is older (0: no limit). |
 | `reattest_interval` | How long an Android attestation lasts (default `168h`, seven days). |
 
-A changed policy takes effect within ten seconds on every gateway, and at once on the one that recorded it. Raising a minimum version or withdrawing a platform reaches every token already issued.
+A changed policy takes effect within ten seconds on every gateway, and at once on the one that recorded it. Raising a minimum version, withdrawing a platform, removing a signing-certificate digest or narrowing `max_patch_age_months` reaches every token already issued: the token carries what the device attested, and every request is judged against the policy as it is.
 
 ## Attesting from the app
 
@@ -83,18 +83,38 @@ The three routes take the device-bound session's token; a key, or a session boun
 
 **Android** fixes the app version in the key when the key is generated, so the device attests again on the policy's interval (seven days by default) and **after every app update**, with a new key; the app does this itself when its `versionCode` changes. Between attestations a refresh carries the last one forward.
 
+### In the SDK
+
+The SDK's session holds the attested token, so the next request, refresh or WebSocket does not fall back to the one before it:
+
+```ts
+const { challenge, device_id } = await client.auth.attestChallenge();
+const binding = await attestationBinding(challenge, device_id);   // SHA-256(challenge ‖ device_id)
+
+// iOS: attestKey(keyId, clientDataHash: binding), then
+await client.auth.attestIOS({ challenge, keyId, attestation });   // standard base64
+// Android: a key generated with setAttestationChallenge(binding), then
+await client.auth.attestAndroid({ challenge, chain });            // leaf first, DER in standard base64
+
+// iOS only: the assertion each refresh carries.
+client.auth.setAppAttestAssertion(async ({ proofId, deviceId, clientDataHash }) =>
+  base64(await appAttest.generateAssertion(keyId, clientDataHash)));
+```
+
+`attestIOS` and `attestAndroid` send the session's own token and store the token they are answered with as the session's (the one every request carries, and `getToken()` for a WebSocket), as `verify` and `refresh` do; the refresh token is unchanged. On iOS the SDK calls the assertion provider each time it makes a refresh proof, with that proof's id and `clientDataHash` = SHA-256(proof id ‖ device id), and sends the answer as `device_proof.app_attest`; resolve `undefined` to send none. An Android app sets no provider. Every refusal on this page reaches the app as an `AttestationError` whose `code` is one of `AuthCode`'s attestation codes, whatever its status, and a refused challenge is never answered by renewing the session and replaying the request.
+
 ## Refusals
 
 | Code | Status | Means | What the app does |
 |---|---|---|---|
-| `ATTESTATION_REQUIRED` | 403 | The session's device has not attested, or its Android attestation is older than the interval. | Attest, then carry on with the token it returns. |
-| `ATTESTATION_INVALID` | 403 | The attestation is of another app, a platform or environment the namespace does not admit, or GrapheneOS where it is not allowed. From `/v1/attest/*`: the proof was refused, or the device's pinned verified-boot key changed. | Nothing on this device will help. |
+| `ATTESTATION_REQUIRED` | 403 | The session's device has not attested, or its Android attestation is older than the interval, or does not show what the policy now asks: it records no signing certificate (an attestation recorded before the gateway kept them; each such device attests again once), or, under `max_patch_age_months`, its attested security patch is past the window. | Attest, then carry on with the token it returns. |
+| `ATTESTATION_INVALID` | 403 | The attestation is of another app, a platform or environment the namespace does not admit, an app signed with a certificate the policy does not name (including one removed since the device attested), or GrapheneOS where it is not allowed. From `/v1/attest/*`: the proof was refused, or the device's pinned verified-boot key changed. | Nothing on this device will help. |
 | `APP_UPDATE_REQUIRED` | 403 | The build is older than the namespace admits. | Ask the user to update. |
 | `ATTESTATION_CHALLENGE_INVALID` | 401 | The challenge was never issued to this device, was used, or expired. | Ask for a new one. |
 | `ATTESTATION_NOT_CONFIGURED` | 409 | The namespace's mode is `off`. | |
 | `AUTH_UNAVAILABLE` | 503 | The gateway cannot read the namespace's policy right now. | Retry. |
 
-A refused proof says only what it means; which check refused it goes to the gateway's log, never to the caller. The SDK has `AuthCode.AttestationRequired`, `AuthCode.AttestationInvalid` and `AuthCode.AppUpdateRequired`.
+A refused proof says only what it means; which check refused it goes to the gateway's log, never to the caller. The routes also answer `ATTESTATION_NEEDS_DEVICE` (403; 401 for an API key), `ATTESTATION_MALFORMED` (400 or 413) and `ATTESTATION_CHALLENGE_LIMIT` (429). In the SDK each is an `AttestationError` with the code in `AuthCode`: `AttestationRequired`, `AttestationInvalid`, `AppUpdateRequired`, `AttestationChallengeInvalid`, `AttestationNotConfigured`, `AttestationNeedsDevice`, `AttestationMalformed`, `AttestationChallengeLimit` (and `AttestationPolicyInvalid` for the policy `PUT`).
 
 ## What is judged
 
@@ -121,10 +141,29 @@ A function socket opened with a **capability** carries no credential; the gate i
 `get_caller_attestation()` returns what the caller's attestation proved, or an empty string:
 
 ```json
-{"platform": "android", "app_id": "chat.anchat", "app_version": "412", "attested_at": 1790000000}
+{"platform": "android", "app_id": "chat.anchat", "app_version": "412", "attested_at": 1790000000,
+ "signing_cert_digests": ["3f4c…e1"], "os_patch_level": 202609}
 ```
 
-It is the gateway's verdict, from the token's signed `att` claim; nothing in a request body or header reaches it. A nested `function_invoke` carries the caller's attestation with it. `app_version` is empty for an iOS 26 install, which signs none.
+It is the gateway's verdict, from the token's signed `att` claim; nothing in a request body or header reaches it. A nested `function_invoke` carries the caller's attestation with it. `app_version` is empty for an iOS 26 install, which signs none. `development` (iOS) and `grapheneos` (Android) appear when true; `signing_cert_digests` and `os_patch_level` are Android's.
+
+That the session attested says nothing about whether the attestation still passes. `get_caller_attestation_verdict()` returns the gateway's own verdict on the caller under the namespace's policy **as it is at the call**, judged exactly as a request is, and **in every mode**: under `monitor`, which refuses nothing at the gateway, it tells the function what enforcing would decide.
+
+```json
+{"mode": "monitor", "verdict": "attestation_invalid", "reason": "signing_cert",
+ "message": "the app is signed with a certificate this namespace does not admit (…)"}
+```
+
+| `verdict` | Means | What the app does |
+|---|---|---|
+| `admitted` | The policy admits the caller now. | |
+| `attestation_required` | The device has not attested, its Android attestation is past the re-attestation interval, or it does not show what the policy now asks (see below). | Attest again. |
+| `app_update_required` | The build is older than the policy admits (`reason` is `app_version`). | Update. |
+| `attestation_invalid` | The attestation is of something the policy does not admit; `reason` names the check: `package` or `app_id` (another app, or a platform the namespace does not take), `signing_cert` (a signing certificate it does not name), `boot_key` (GrapheneOS where it is not allowed), `environment` (an iOS development key), `app_version_malformed`. | Nothing on this device will help. |
+| `not_configured` | The namespace's mode is `off`: there is no app to judge against, and nobody is admitted as attested. | |
+| `unavailable` | The gateway cannot read the policy right now. It says nothing about the caller. | Retry. |
+
+`mode` is the namespace's mode (absent when `unavailable`), `message` says why in words. A function that grants something only to the genuine app (a trial, a reward) refuses anything but `admitted` with a code of its own; the app then does what the table says. It costs a map lookup, so it can be asked on every call, and it is judged each time it is asked. It is the verdict on the caller's **device**: the gate's exemptions do not apply, so an owner calling from the CLI is told `attestation_required`.
 
 ## Watching it
 
@@ -133,5 +172,4 @@ It is the gateway's verdict, from the token's signed `att` claim; nothing in a r
 ## Limits
 
 - Revoking a device ends its tokens and sockets within ten seconds (the revocation list); there is no separate "revoke this attestation".
-- A signing-certificate digest removed from the policy applies at each device's next attestation: the access token carries the app id and version, not the digest.
 - Per-request proof of possession (the app signing each request with its device key) is not part of this; the session is bound to the device, and the attestation to the session.

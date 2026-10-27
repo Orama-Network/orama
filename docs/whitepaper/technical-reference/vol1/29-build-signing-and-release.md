@@ -286,7 +286,7 @@ None of this is signed by the wallet or the release root. A Gitea release carrie
 | `vault-guardian` | zig 0.15.2, `zig build`, `zig build test` |
 | `chain-test` | in `chain/`: the release cross-builds, `go vet` under three build-tag sets, the pure-Go tests (`-tags nowasm`), and every package under `-race` with libwasmvm (built from the module-cache source), the Orchard library and the verifier binary linked (`make -C chain build vet-all test test-race`) |
 | `chain-static` | in `chain/`: staticcheck, gosec (high severity, high confidence) and govulncheck under two tag sets that together cover every file (the default build, and `nowasm orchardffi`), judged by `e2e/cmd/scangate` against `govulncheck-accepted.yaml`; the consensus-determinism semgrep rules (`chain/.semgrep/consensus.yml`) and their tests |
-| `chain-rust` | the Rust crates under `chain/`: `cargo clippy --all-targets -D warnings`, `cargo audit` and `cargo deny` with `chain/deny.toml` (both installed from their release archives, checked against sha256 pins in `chain/ci.mk`) |
+| `chain-rust` | the Rust crates under `chain/`: `cargo clippy --all-targets -D warnings`, `cargo audit` and `cargo deny` with `chain/deny.toml` (both installed from their release archives, checked against sha256 pins in `chain/ci.mk`; the test contracts by `cargo deny` alone on their `wasm32-unknown-unknown` graph), and the tests of the `cosmwasm-crypto` fork `chain/native` links (`make -C chain native-crypto-test`) |
 | `secrets` | gitleaks over the committed tree with `.gitleaks.toml` |
 | `version-sanity` | the `VERSION` against the two `package.json` files, as a warning |
 

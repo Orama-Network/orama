@@ -19,9 +19,15 @@ const (
 	ExpiredReason = "expired"
 	ClosedReason  = "closed"
 
-	// Control routes on the SFU, called by a namespace gateway with a MAC.
-	KickPath = "/admin/kick"
-	MutePath = "/admin/mute"
+	// Control routes on the SFU, called by a namespace gateway with a MAC. A
+	// device kick and a video mute have routes of their own, not a field on the
+	// user kick or the audio mute: an SFU that predates them answers 404, which
+	// the gateway reports, where a field it does not know would be dropped and
+	// the request read as a kick of every device or a mute of the audio.
+	KickPath       = "/admin/kick"
+	KickDevicePath = "/admin/kick-device"
+	MutePath       = "/admin/mute"
+	VideoMutePath  = "/admin/mute-video"
 )
 
 // MembershipEvent is one peer joining or leaving a room, as the SFU saw it.
@@ -39,17 +45,21 @@ type MembershipEvent struct {
 // clock when the admission was revoked: joins ticketed before it are refused.
 // AdmitGen is the newest admission generation the kick revoked (0: none, or an
 // older gateway): where it and a ticket's AdmitGen both exist, the two numbers
-// decide and no clock does.
+// decide and no clock does. DeviceID is set on KickDevicePath only, and names
+// the one device of the user that is removed; on KickPath it is empty and every
+// device of the user is.
 type KickRequest struct {
 	Room     string `json:"room"`
 	UserID   string `json:"user_id"`
+	DeviceID string `json:"device_id,omitempty"`
 	AtMs     int64  `json:"at_ms"`
 	AdmitGen int64  `json:"admit_gen,omitempty"`
 }
 
 // MuteRequest asks an SFU to stop (or resume) forwarding a user's audio in a
-// room. AtMs is the gateway's clock when the mute was recorded: a join ticketed
-// before it, whose Muted is therefore a stale snapshot, takes this state.
+// room (MutePath), or their video (VideoMutePath). AtMs is the gateway's clock
+// when the mute was recorded: a join ticketed before it, whose Muted or
+// VideoMuted is therefore a stale snapshot, takes this state.
 type MuteRequest struct {
 	Room   string `json:"room"`
 	UserID string `json:"user_id"`

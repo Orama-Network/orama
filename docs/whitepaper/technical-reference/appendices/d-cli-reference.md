@@ -1566,8 +1566,11 @@ orama function logs <name> [flags]
 Retrieves the most recent invocations for a deployed function.
 
 Each invocation record shows: timestamp, request_id, status, duration_ms,
-and (if any) the error message. WASM functions that emit log entries via
-log_info / log_error have those entries nested under each record.
+and (if any) the error message. A second line says where the duration went:
+the node whose gateway ran it, the wait for an execution slot (queue), loading
+the module (load: 0 when it was in memory) and the database calls with their
+summed time (db). WASM functions that emit log entries via log_info /
+log_error have those entries nested under each record.
 
 Pass --wasm-only to retrieve only the WASM-emitted log lines (legacy
 behavior; rarely useful on functions that don't call log_info).
@@ -3233,7 +3236,7 @@ commit networks/ and core/pkg/netregistry/embedded/ together.
 | `--channel` | — | Release channel: nightly, main or dev/&lt;branch> [required] |
 | `--dir` | `networks` | The repository's networks directory |
 | `--faucet` | `false` | The network funds new operators from a faucet |
-| `--min-version` | `0.3.8` | Oldest orama version that may join, X.Y.Z |
+| `--min-version` | `0.3.11` | Oldest orama version that may join, X.Y.Z |
 | `--name` | — | Network name, for example testnet [required] |
 | `--release-repo` | — | https base URL of the release repository [required] |
 | `--release-root` | — | The release-root.json file its releases are verified against [required] |
@@ -3274,7 +3277,7 @@ commit networks/ and core/pkg/netregistry/embedded/ together.
 |---|---|---|
 | `--channel` | — | Release channel: nightly, main or dev/&lt;branch> [required] |
 | `--dir` | `networks` | The repository's networks directory |
-| `--min-version` | `0.3.8` | Oldest orama version that may join, X.Y.Z |
+| `--min-version` | `0.3.11` | Oldest orama version that may join, X.Y.Z |
 | `--name` | — | Network name, for example devnet [required] |
 | `--release-repo` | — | https base URL of the release repository [required] |
 | `--release-root` | — | The release-root.json file its releases are verified against [required] |

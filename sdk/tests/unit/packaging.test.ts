@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 /**
  * The package was ESM-only while its README promised isomorphic use, so
@@ -64,6 +65,15 @@ describe('package.json', () => {
     expect(core).not.toMatch(/relay-transport/);
   });
 
+  it('exposes the workload client as its own entry, so the core never imports node:fs/promises', () => {
+    expect(pkg.exports['./workload'].import.default).toBe('./dist/workload.js');
+    expect(pkg.exports['./workload'].require.default).toBe('./dist/workload.cjs');
+    expect(pkg.exports['./workload'].import.types).toBe('./dist/workload.d.ts');
+    expect(pkg.exports['./workload'].require.types).toBe('./dist/workload.d.cts');
+    const core = readFileSync(join(root, 'src/index.ts'), 'utf8');
+    expect(core).not.toMatch(/\.\/workload/);
+  });
+
   it('exposes package.json, which tooling reads', () => {
     expect(pkg.exports['./package.json']).toBe('./package.json');
   });
@@ -122,15 +132,60 @@ describe('the built package', () => {
   });
 
   it.skipIf(!distBuilt)('emits every file the exports map names', () => {
-    for (const path of [
-      pkg.exports['.'].import.default,
-      pkg.exports['.'].import.types,
-      pkg.exports['.'].require.default,
-      pkg.exports['.'].require.types,
-    ]) {
-      expect(existsSync(join(root, path)), `${path} is named in exports but not built`).toBe(true);
+    for (const [name, entry] of Object.entries(pkg.exports)) {
+      if (typeof entry === 'string') {
+        continue;
+      }
+      const conditions = entry as Record<string, { types: string; default: string }>;
+      for (const path of [
+        conditions.import.default,
+        conditions.import.types,
+        conditions.require.default,
+        conditions.require.types,
+      ]) {
+        expect(existsSync(join(root, path)), `${name}: ${path} is named in exports but not built`).toBe(true);
+      }
     }
   });
+
+  /**
+   * Metro (React Native, Expo) resolves every import of a bundle, dynamic ones
+   * included, and has no Node standard library: one `import("fs/promises")`
+   * anywhere in the main entry's module graph fails the app's build. Walk that
+   * graph — static imports, dynamic imports and requires, through every chunk
+   * it reaches — and refuse any Node built-in.
+   */
+  it.skipIf(!distBuilt).each(['dist/index.js', 'dist/index.cjs'])(
+    '%s reaches no Node built-in, so React Native and browsers can bundle it',
+    (entry) => {
+      const specifier =
+        /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/gm;
+      const builtins = new Set(builtinModules);
+      const seen = new Set<string>();
+      const offending: string[] = [];
+      const visit = (file: string) => {
+        if (seen.has(file)) {
+          return;
+        }
+        seen.add(file);
+        // Comments are not imports: the bundle keeps its JSDoc, examples and all.
+        const source = readFileSync(file, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .replace(/^\s*\/\/.*$/gm, '');
+        for (const match of source.matchAll(specifier)) {
+          const spec = match[1];
+          if (spec.startsWith('.')) {
+            visit(resolve(dirname(file), spec));
+          } else if (spec.startsWith('node:') || builtins.has(spec.split('/')[0]) || builtins.has(spec)) {
+            offending.push(`${file.slice(root.length + 1)} imports ${spec}`);
+          }
+        }
+      };
+      visit(join(root, entry));
+      expect(seen.size, 'the walk reached no chunk').toBeGreaterThan(1);
+      expect(offending).toEqual([]);
+    },
+  );
 });
 
 describe('examples', () => {
