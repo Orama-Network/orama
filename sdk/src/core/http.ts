@@ -139,14 +139,17 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const DATE_HEADER_MIDPOINT_MS = 500;
 
 /**
- * The 401s that refuse a device proof in the request's body, not the bearer
- * token in its header. Renewing the session cannot fix one, and replaying the
- * request would present the same proof again.
+ * The 401s that refuse something in the request's body (a device proof, an
+ * attestation challenge) or the kind of caller, not an expired bearer token.
+ * Renewing the session cannot fix one, and replaying the request would present
+ * the same proof or challenge again.
  */
-const DEVICE_PROOF_REFUSALS = new Set<string>([
+const NOT_SESSION_REFUSALS = new Set<string>([
   AuthCode.DeviceProofRequired,
   AuthCode.DeviceProofInvalid,
   AuthCode.DeviceProofClockSkew,
+  AuthCode.AttestationChallengeInvalid,
+  AuthCode.AttestationNeedsDevice,
 ]);
 
 /** Fraction of the computed delay added as random jitter. */
@@ -677,7 +680,7 @@ export class HttpClient {
     return (
       error instanceof SDKError &&
       error.httpStatus === 401 &&
-      !DEVICE_PROOF_REFUSALS.has(error.code)
+      !NOT_SESSION_REFUSALS.has(error.code)
     );
   }
 

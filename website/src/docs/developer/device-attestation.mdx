@@ -83,6 +83,26 @@ The three routes take the device-bound session's token; a key, or a session boun
 
 **Android** fixes the app version in the key when the key is generated, so the device attests again on the policy's interval (seven days by default) and **after every app update**, with a new key; the app does this itself when its `versionCode` changes. Between attestations a refresh carries the last one forward.
 
+### In the SDK
+
+The SDK's session holds the attested token, so the next request, refresh or WebSocket does not fall back to the one before it:
+
+```ts
+const { challenge, device_id } = await client.auth.attestChallenge();
+const binding = await attestationBinding(challenge, device_id);   // SHA-256(challenge ‖ device_id)
+
+// iOS: attestKey(keyId, clientDataHash: binding), then
+await client.auth.attestIOS({ challenge, keyId, attestation });   // standard base64
+// Android: a key generated with setAttestationChallenge(binding), then
+await client.auth.attestAndroid({ challenge, chain });            // leaf first, DER in standard base64
+
+// iOS only: the assertion each refresh carries.
+client.auth.setAppAttestAssertion(async ({ proofId, deviceId, clientDataHash }) =>
+  base64(await appAttest.generateAssertion(keyId, clientDataHash)));
+```
+
+`attestIOS` and `attestAndroid` send the session's own token and store the token they are answered with as the session's (the one every request carries, and `getToken()` for a WebSocket), as `verify` and `refresh` do; the refresh token is unchanged. On iOS the SDK calls the assertion provider each time it makes a refresh proof, with that proof's id and `clientDataHash` = SHA-256(proof id ‖ device id), and sends the answer as `device_proof.app_attest`; resolve `undefined` to send none. An Android app sets no provider. Every refusal on this page reaches the app as an `AttestationError` whose `code` is one of `AuthCode`'s attestation codes, whatever its status, and a refused challenge is never answered by renewing the session and replaying the request.
+
 ## Refusals
 
 | Code | Status | Means | What the app does |
@@ -94,7 +114,7 @@ The three routes take the device-bound session's token; a key, or a session boun
 | `ATTESTATION_NOT_CONFIGURED` | 409 | The namespace's mode is `off`. | |
 | `AUTH_UNAVAILABLE` | 503 | The gateway cannot read the namespace's policy right now. | Retry. |
 
-A refused proof says only what it means; which check refused it goes to the gateway's log, never to the caller. The SDK has `AuthCode.AttestationRequired`, `AuthCode.AttestationInvalid` and `AuthCode.AppUpdateRequired`.
+A refused proof says only what it means; which check refused it goes to the gateway's log, never to the caller. The routes also answer `ATTESTATION_NEEDS_DEVICE` (403; 401 for an API key), `ATTESTATION_MALFORMED` (400 or 413) and `ATTESTATION_CHALLENGE_LIMIT` (429). In the SDK each is an `AttestationError` with the code in `AuthCode`: `AttestationRequired`, `AttestationInvalid`, `AppUpdateRequired`, `AttestationChallengeInvalid`, `AttestationNotConfigured`, `AttestationNeedsDevice`, `AttestationMalformed`, `AttestationChallengeLimit` (and `AttestationPolicyInvalid` for the policy `PUT`).
 
 ## What is judged
 

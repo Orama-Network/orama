@@ -12,6 +12,14 @@ import {
   makeDeviceProof,
   normalizeUserCode,
 } from "./device";
+import {
+  AndroidAttestation,
+  AppAttestAssertionProvider,
+  AttestationChallenge,
+  AttestationResult,
+  IOSAttestation,
+  attestationBinding,
+} from "./attestation";
 
 /** Where the id of the device the stored session is bound to is kept. */
 const DEVICE_ID_KEY = "deviceId";
@@ -26,6 +34,14 @@ interface SessionResponse {
   device_id?: string;
   expires_in?: number;
   token_type?: string;
+}
+
+/** What an attest call answers: the session's new access token, carrying the attestation. */
+export interface AttestedSession {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  attestation: AttestationResult;
 }
 
 /** What to clear, and whether to tell the gateway. */
@@ -57,6 +73,7 @@ export class AuthClient {
   private currentApiKey?: string;
   private currentJwt?: string;
   private deviceSigner?: DeviceSigner;
+  private appAttestAssertion?: AppAttestAssertionProvider;
   private readonly log: Logger;
 
   constructor(config: {
@@ -109,6 +126,19 @@ export class AuthClient {
    */
   setDeviceSigner(signer: DeviceSigner | undefined): void {
     this.deviceSigner = signer;
+  }
+
+  /**
+   * On iOS, in a namespace that attests: make the App Attest assertion each
+   * refresh carries. The gateway carries an iOS device's attestation into a
+   * refreshed token only against a fresh assertion over that refresh's proof,
+   * which only the platform can make, and only once the proof's id is known;
+   * the SDK asks for it each time it makes a refresh proof and sends it as
+   * `device_proof.app_attest`. Android carries its attestation forward with no
+   * input, so an Android app sets none.
+   */
+  setAppAttestAssertion(provider: AppAttestAssertionProvider | undefined): void {
+    this.appAttestAssertion = provider;
   }
 
   /**
@@ -555,7 +585,13 @@ export class AuthClient {
     send: (proof: DeviceProof) => Promise<T>
   ): Promise<T> {
     const signer = this.requireDeviceSigner(action);
-    const prove = () => makeDeviceProof(signer, action, namespace, binding, this.httpClient.serverNow());
+    const prove = async () => {
+      const proof = await makeDeviceProof(signer, action, namespace, binding, this.httpClient.serverNow());
+      if (action === "refresh") {
+        await this.attachAppAttest(proof);
+      }
+      return proof;
+    };
     try {
       return await send(await prove());
     } catch (error) {
@@ -569,6 +605,70 @@ export class AuthClient {
       this.httpClient.observeServerTime(serverTime * 1000);
       return send(await prove());
     }
+  }
+
+  /** Add the app's App Attest assertion over this refresh proof, when it makes one. */
+  private async attachAppAttest(proof: DeviceProof): Promise<void> {
+    const deviceId = await this.storage.get(DEVICE_ID_KEY);
+    if (!this.appAttestAssertion || !deviceId) {
+      return;
+    }
+    const assertion = await this.appAttestAssertion({
+      proofId: proof.id,
+      deviceId,
+      clientDataHash: await attestationBinding(proof.id, deviceId),
+    });
+    if (assertion) {
+      proof.app_attest = assertion;
+    }
+  }
+
+  /**
+   * A single-use attestation challenge for this session's device. The session
+   * must be bound to a device. The platform attests over
+   * `attestationBinding(challenge, device_id)`.
+   */
+  async attestChallenge(): Promise<AttestationChallenge> {
+    return this.httpClient.post<AttestationChallenge>("/v1/attest/challenge", {});
+  }
+
+  /**
+   * Attest this session's device with App Attest. On success the session's
+   * token is the one the gateway answers with, which carries the attestation:
+   * every request after this, and the token handed out for a WebSocket, use it.
+   * Set an assertion provider (`setAppAttestAssertion`) so refreshes keep it.
+   */
+  async attestIOS(params: IOSAttestation): Promise<AttestedSession> {
+    return this.storeAttested(
+      await this.httpClient.post<AttestedSession>("/v1/attest/ios", {
+        challenge: params.challenge,
+        key_id: params.keyId,
+        attestation: params.attestation,
+      })
+    );
+  }
+
+  /**
+   * Attest this session's device with an Android key-attestation chain. On
+   * success the session's token is the attested one, as for `attestIOS`; the
+   * gateway carries it into every refresh with no further input.
+   */
+  async attestAndroid(params: AndroidAttestation): Promise<AttestedSession> {
+    return this.storeAttested(
+      await this.httpClient.post<AttestedSession>("/v1/attest/android", {
+        challenge: params.challenge,
+        chain: params.chain,
+      })
+    );
+  }
+
+  /** Make the attested token the session's own. */
+  private storeAttested(response: AttestedSession): AttestedSession {
+    if (!response?.access_token) {
+      throw new SDKError("the gateway accepted the attestation and returned no token", 500, "ATTESTATION_NO_TOKEN");
+    }
+    this.setJwt(response.access_token);
+    return response;
   }
 
   private requireDeviceSigner(what: string): DeviceSigner {

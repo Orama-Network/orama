@@ -29,6 +29,11 @@ export interface DeviceProof {
   iat: number;
   id: string;
   sig: string;
+  /**
+   * On a refresh from an iOS device in a namespace that attests: the App
+   * Attest assertion over SHA-256(id ‖ device id), standard base64.
+   */
+  app_attest?: string;
 }
 
 /** The first line of every proof statement. */

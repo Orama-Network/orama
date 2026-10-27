@@ -17,6 +17,7 @@ const goSources = [
   resolve(__dirname, '../../../core/pkg/gateway/auth_errors.go'),
   resolve(__dirname, '../../../core/pkg/gateway/handlers/auth/signin_errors.go'),
   resolve(__dirname, '../../../core/pkg/gateway/handlers/auth/device_errors.go'),
+  resolve(__dirname, '../../../core/pkg/gateway/handlers/attest/errors.go'),
 ];
 const haveGo = goSources.every((p) => existsSync(p));
 const go = haveGo ? goSources.map((p) => readFileSync(p, 'utf8')).join('\n') : '';

@@ -169,7 +169,11 @@ const client = createClient({ baseURL, apiKey, storage: new LocalStorageAdapter(
 
 ### `client.auth` methods
 
-`setApiKey`, `setJwt`, `getToken`, `renew`, `refresh`, `whoami`, `logout`, `logoutUser`, `clear`, `challenge`, `verify`, `getApiKey`, `setDeviceSigner`, `listDevices`, `revokeDevice`, `approveDeviceLink`, `startDeviceLink`, `claimDeviceLink`.
+`setApiKey`, `setJwt`, `getToken`, `renew`, `refresh`, `whoami`, `logout`, `logoutUser`, `clear`, `challenge`, `verify`, `getApiKey`, `setDeviceSigner`, `listDevices`, `revokeDevice`, `approveDeviceLink`, `startDeviceLink`, `claimDeviceLink`, `attestChallenge`, `attestIOS`, `attestAndroid`, `setAppAttestAssertion`.
+
+### Device attestation
+
+`attestChallenge()`, then `attestIOS({ challenge, keyId, attestation })` or `attestAndroid({ challenge, chain })`, attest the session's device and keep the token they are answered with as the session's, for HTTP and the WebSocket. `attestationBinding(challenge, deviceId)` is the SHA-256 the platform signs over. On iOS, `setAppAttestAssertion(provider)` makes the App Attest assertion each refresh proof carries. Refusals are `AttestationError`. See [Device attestation](/docs/developer/device-attestation#in-the-sdk).
 
 ## Database
 
@@ -345,6 +349,7 @@ Every failure is an `SDKError`.
 | `RevokedCredentialError` | 401 `AUTH_REVOKED`: sign in again, do not retry | |
 | `ScopeError` | 403: the credential's grants do not cover the operation | `requiredScope` |
 | `NamespaceError` | 403 `NAMESPACE_MISMATCH`: wrong gateway, or the key came from the wrong environment | `namespace`, `credentialNamespace` |
+| `AttestationError` | An attestation code (`ATTESTATION_*`, `APP_UPDATE_REQUIRED`), whatever the status: the device has not attested, its proof was refused, the build is too old, or an attest call could not be served | |
 | `NotFoundError` | 404 | |
 | `NetworkError` | No HTTP response. `httpStatus` is 0 | `code` is `NETWORK_ERROR`, `TIMEOUT` or `ABORTED` |
 | `LogoutError` | `logout` cleared the device's session but the gateway did not end it | `serverError` |
