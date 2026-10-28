@@ -119,7 +119,7 @@ func FuzzNetclassCheckHost(f *testing.F) {
 
 // FuzzNetclassIsPublic: IsPublic on any 4- or 16-byte address (with or without a zone) is false for
 // every range the package lists as special and for a zoned address, is stable under unmapping an
-// IPv4-mapped form, and agrees with the standard library on the classes it also knows.
+// unzoned IPv4-mapped form, and agrees with the standard library on the classes it also knows.
 func FuzzNetclassIsPublic(f *testing.F) {
 	f.Add([]byte{8, 8, 8, 8}, "")
 	f.Add([]byte{10, 0, 0, 1}, "")
@@ -139,7 +139,7 @@ func FuzzNetclassIsPublic(f *testing.F) {
 			return
 		}
 		got := netclass.IsPublic(addr)
-		if got != netclass.IsPublic(addr.Unmap()) {
+		if addr.Zone() == "" && got != netclass.IsPublic(addr.Unmap()) {
 			t.Fatalf("%s: verdict changes when unmapped", addr)
 		}
 		un := addr.Unmap()
