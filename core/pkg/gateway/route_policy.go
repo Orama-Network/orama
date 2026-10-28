@@ -90,11 +90,8 @@ func buildRoutePolicies() *routepolicy.Table {
 		// The status page's script and stylesheet: static files, the same
 		// for everyone. Its data is /v1/status.
 		"/status/assets/",
-		// The key material a client needs to verify a token it was given.
-		"/v1/auth/jwks", "/.well-known/jwks.json",
-		// The login handshake. Nobody has a credential yet, which is the point.
-		"/v1/auth/challenge", "/v1/auth/verify", "/v1/auth/refresh",
-		"/v1/auth/logout", "/v1/auth/api-key",
+		// Getting a key with a wallet signature.
+		"/v1/auth/api-key",
 		// The device authorization grant. The machine asking has no credential
 		// — that is what it is asking for — and approving one costs a wallet
 		// signature, which the handler verifies exactly as /v1/auth/verify does.
@@ -120,6 +117,17 @@ func buildRoutePolicies() *routepolicy.Table {
 		// bounds the load (chain_tx_limit.go). It does not forward an arbitrary
 		// path.
 		"/v1/chain/",
+	)
+	// The login handshake and the session's own life: open, since nobody has
+	// a credential yet when it starts, and the routes a pending device's
+	// restricted session reaches (feat-973). Refreshing is how it becomes a
+	// full session once the namespace approves the device; logging out ends
+	// this session only (all=true is refused to it in the handler).
+	t.Add(policyOwnSession(policyOpen),
+		// The key material a client needs to verify a token it was given.
+		"/v1/auth/jwks", "/.well-known/jwks.json",
+		"/v1/auth/challenge", "/v1/auth/verify", "/v1/auth/refresh",
+		"/v1/auth/logout",
 	)
 	// The invoker decides whether the caller may run the function, and a
 	// public function is open by design — but a grant narrowed to
@@ -158,8 +166,8 @@ func buildRoutePolicies() *routepolicy.Table {
 
 	// --- Any valid credential ------------------------------------------
 	t.Add(policyCredential,
-		// Exchanging a key for a token, and asking what the credential is.
-		"/v1/auth/token", "/v1/auth/whoami",
+		// Exchanging a key for a token.
+		"/v1/auth/token",
 		// A wallet's own sessions. The handler refuses anything but a token
 		// from a signed-in wallet, and reads whose sessions from that token.
 		"/v1/auth/sessions", "/v1/auth/sessions/",
@@ -175,12 +183,16 @@ func buildRoutePolicies() *routepolicy.Table {
 		"/v1/namespace/webrtc/status",
 	)
 
+	// Asking what the credential is. A pending device is told it is pending.
+	t.Add(policyOwnSession(policyCredential), "/v1/auth/whoami")
+
 	// Device attestation (feat-941): a signed-in device asks for a challenge
 	// and posts its proof. The handler refuses anything but a device-bound
 	// session's token. MainGateway: the index gateway is the one that keeps
 	// Google's and GrapheneOS's lists fresh, so a namespace gateway never
-	// verifies an Android chain.
-	attestRoute := policyCredential
+	// verifies an Android chain. A pending device attests itself: a namespace
+	// that enforces attestation judges its admission functions' callers too.
+	attestRoute := policyOwnSession(policyCredential)
 	attestRoute.MainGateway = true
 	t.Add(attestRoute, "/v1/attest/challenge", "/v1/attest/ios", "/v1/attest/android")
 
@@ -493,11 +505,22 @@ func ormGatewayRoutes() []string {
 // needs no credential; whether a caller may run a private one is the
 // invoker's decision), but a grant narrowed to `fn:name=` is resolved and
 // applied (narrowOpenRoute), so a narrowed wallet runs only its functions.
+//
+// A pending device's session reaches it, and the invoker runs for it only a
+// function deployed open to pending devices.
 var policyInvoke = func() routepolicy.Policy {
 	p := policyOpen
 	p.NarrowedByGrant = true
+	p.PendingDevice = routepolicy.PendingFunctionInvoke
 	return p
 }()
+
+// policyOwnSession is p, reachable by a pending device's restricted session
+// because the route acts on that session or its device alone.
+func policyOwnSession(p routepolicy.Policy) routepolicy.Policy {
+	p.PendingDevice = routepolicy.PendingOwnSession
+	return p
+}
 
 // functionRoutePolicy is the policy of one operation on /v1/functions/.
 //
@@ -518,7 +541,11 @@ func functionRoutePolicy(r *http.Request) routepolicy.Policy {
 	case isCapabilityUpgrade(r):
 		return policyHandlerAuth
 	case serverlesshandlers.IsFunctionAction(r.URL.Path, "ws"):
-		return owned(auth.DomainFn, auth.ActionInvoke)
+		// The socket handler refuses a pending device's session before the
+		// upgrade unless the function is open to pending devices.
+		p := owned(auth.DomainFn, auth.ActionInvoke)
+		p.PendingDevice = routepolicy.PendingFunctionInvoke
+		return p
 	default:
 		return owned(auth.DomainFn, auth.ActionManage)
 	}

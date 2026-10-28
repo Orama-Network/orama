@@ -1,4 +1,5 @@
 export { AuthClient } from "./client";
+export type { DeviceState } from "./client";
 export { deviceIdOf, deviceProofMessage, makeDeviceProof, normalizeUserCode } from "./device";
 export type {
   DeviceSigner,

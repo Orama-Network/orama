@@ -194,6 +194,14 @@ export const AuthCode = {
   DeviceRevoked: "DEVICE_REVOKED",
   /** The device waits for another of the account's devices to approve it. */
   DevicePending: "DEVICE_PENDING",
+  /**
+   * The session is a pending device's restricted session (the namespace's
+   * function device policy) and this call is not open to it: it reaches its
+   * own session and the functions deployed `open_to_pending_devices`. Run the
+   * application's admission flow; once a function approves the device,
+   * `refresh()` and retry. `details.device_id` is the device.
+   */
+  DevicePendingApproval: "DEVICE_PENDING_APPROVAL",
   /** The account has no such device. */
   DeviceNotFound: "DEVICE_NOT_FOUND",
   /** The device key is enrolled for another account. */

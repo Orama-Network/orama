@@ -127,6 +127,7 @@ export type {
   DeviceLink,
   PendingDeviceApproval,
 } from "./auth/device";
+export type { DeviceState } from "./auth/client";
 export type {
   WSClientConfig,
   ReconnectConfig,

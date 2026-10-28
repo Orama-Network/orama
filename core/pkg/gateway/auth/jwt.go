@@ -108,6 +108,74 @@ type JWTClaims struct {
 	Custom map[string]string `json:"custom,omitempty"`
 }
 
+// The audiences a session's access token is minted for.
+//
+// A device still pending under the function policy holds a token for
+// AudiencePendingDevice, never for AudienceGateway. The difference is in the
+// audience rather than in a claim of its own so that anything which does not
+// know about pending devices refuses the token instead of reading it as a full
+// session: a gateway from before the policy rejects the audience outright, and
+// so does any verifier that checks for AudienceGateway.
+const (
+	// AudienceGateway is a full session's.
+	AudienceGateway = "gateway"
+	// AudiencePendingDevice is the restricted session of a pending device: the
+	// gateway refuses it everywhere but the routes that admit pending devices
+	// (routepolicy.Policy.PendingDevice), and the invoker runs for it only the
+	// functions open to pending devices.
+	AudiencePendingDevice = "gateway-pending-device"
+)
+
+// The states of the device a token is bound to, as a function reads them
+// (get_caller_device_state).
+const (
+	CallerDevicePending = "pending"
+	CallerDeviceActive  = "active"
+)
+
+// PendingDevice reports whether the token is a pending device's restricted
+// session.
+func (c *JWTClaims) PendingDevice() bool {
+	return c != nil && c.Aud == AudiencePendingDevice
+}
+
+// DeviceState is the state the token's device was in when it was minted:
+// CallerDevicePending, CallerDeviceActive, or "" for a token bound to no
+// device. An active device's token stops when the device is revoked, so the
+// state it names holds for as long as the token is accepted; a pending device
+// approved since says "pending" until its next refresh.
+func (c *JWTClaims) DeviceState() string {
+	switch {
+	case c == nil || c.Did == "":
+		return ""
+	case c.PendingDevice():
+		return CallerDevicePending
+	default:
+		return CallerDeviceActive
+	}
+}
+
+// MintedDeviceState is DeviceState of an access token this gateway has just
+// minted and is about to hand back, read without verifying it: it is for
+// telling the client what it was given (a refresh answers it beside the
+// token), never for deciding what a presented token may do — that is
+// ParseAndVerifyJWT's.
+func MintedDeviceState(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims JWTClaims
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	return claims.DeviceState()
+}
+
 // AccountIDClaim is the custom claim a namespace sets, through its
 // auth-claims-provider function, to name the account a session belongs to
 // (e.g. AnChat's users.user_id). The subject is the credential that signed in —
@@ -270,7 +338,15 @@ func (s *Service) ParseAndVerifyJWT(token string) (*JWTClaims, error) {
 	if claims.Iat != 0 && claims.Iat-skew > now {
 		return nil, errors.New("invalid iat")
 	}
-	if claims.Aud != "gateway" {
+	switch claims.Aud {
+	case AudienceGateway:
+	case AudiencePendingDevice:
+		// Only a device is ever pending: a pending token bound to none is not
+		// one this gateway mints.
+		if strings.TrimSpace(claims.Did) == "" {
+			return nil, errors.New("invalid audience: a pending device's token names no device")
+		}
+	default:
 		return nil, errors.New("invalid audience")
 	}
 	// A workload's subject names the namespace it belongs to. A token whose
@@ -300,6 +376,9 @@ type SessionBinding struct {
 	SessionID string
 	// Attestation is what the device's attestation proved, or nil.
 	Attestation *AttestationClaim
+	// Pending mints the restricted session of a device still pending under
+	// the function policy (AudiencePendingDevice). It needs a DeviceID.
+	Pending bool
 }
 
 // GenerateJWT mints a signed access token. `custom` carries additive
@@ -315,6 +394,13 @@ func (s *Service) GenerateJWT(ns, subject string, ttl time.Duration, custom map[
 
 // GenerateBoundJWT mints an access token carrying its session binding.
 func (s *Service) GenerateBoundJWT(ns, subject string, ttl time.Duration, custom map[string]string, binding SessionBinding) (string, int64, error) {
+	audience := AudienceGateway
+	if binding.Pending {
+		if binding.DeviceID == "" {
+			return "", 0, errors.New("a pending session is a device's: it needs a device id")
+		}
+		audience = AudiencePendingDevice
+	}
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
 	jti, err := newTokenID()
@@ -324,7 +410,7 @@ func (s *Service) GenerateBoundJWT(ns, subject string, ttl time.Duration, custom
 	payload := map[string]any{
 		"iss":       "orama-gateway",
 		"sub":       subject,
-		"aud":       "gateway",
+		"aud":       audience,
 		"iat":       now.Unix(),
 		"nbf":       now.Unix(),
 		"exp":       exp.Unix(),

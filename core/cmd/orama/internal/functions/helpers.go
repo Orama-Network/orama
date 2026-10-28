@@ -70,6 +70,13 @@ type FunctionConfig struct {
 	// Empty = any caller the public/private rule admits. The gateway checks
 	// at deploy that each name is a deployed function.
 	InvocableBy []string `yaml:"invocable_by"`
+
+	// OpenToPendingDevices lets a pending device's restricted session (the
+	// namespace's function device policy, feat-973) invoke the function and
+	// open its WebSocket: the functions that carry out the namespace's own
+	// admission of a new device. False refuses one 403
+	// DEVICE_PENDING_APPROVAL.
+	OpenToPendingDevices bool `yaml:"open_to_pending_devices"`
 }
 
 // RateLimitConfig is function.yaml's rate_limit. Each rule allows `requests`
@@ -371,6 +378,9 @@ func uploadWASMFunction(wasmPath string, cfg *FunctionConfig) (map[string]interf
 	}
 	if len(cfg.InvocableBy) > 0 {
 		metaObj["invocable_by"] = cfg.InvocableBy
+	}
+	if cfg.OpenToPendingDevices {
+		metaObj["open_to_pending_devices"] = true
 	}
 	if len(metaObj) > 0 {
 		metadata, _ := json.Marshal(metaObj)

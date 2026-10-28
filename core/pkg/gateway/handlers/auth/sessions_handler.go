@@ -108,11 +108,26 @@ func (h *Handlers) SessionByIDHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
-// sessionOwner is whose sessions these are.
+// sessionOwner is whose sessions these are — and whose devices, which
+// deviceCaller asks it.
 //
 // A JWT names its subject. An API key does not name a wallet — it is a
 // credential in its own right — so it cannot be used to list or end the
 // sessions of the wallet that happened to mint it.
+//
+// Two tokens that do name a wallet are not the account's to act with either:
+//
+//   - a pending device's restricted session, which has no say over the
+//     account's other sessions or devices (the route policy refuses it before
+//     it gets here; this is the backstop);
+//   - a token bound to no device, in a namespace whose policy requires one for
+//     this wallet. Such a token acts on every device with no proof, which is
+//     what a session bound to no device is for under optional, where the wallet
+//     alone is the account. Under any other policy an end user is issued no
+//     such session and cannot refresh one, so the only ones left are minted
+//     before the policy was set, for the rest of their fifteen minutes: they are
+//     refused here rather than left to revoke the devices the policy now
+//     protects.
 func (h *Handlers) sessionOwner(w http.ResponseWriter, r *http.Request) (subject, namespace string, ok bool) {
 	ctx := r.Context()
 	namespace = h.servedNamespace(r)
@@ -121,6 +136,13 @@ func (h *Handlers) sessionOwner(w http.ResponseWriter, r *http.Request) (subject
 	if !cast || claims == nil || strings.TrimSpace(claims.Sub) == "" {
 		writeError(w, http.StatusForbidden,
 			"sessions belong to a signed-in wallet: call this with a token from 'orama auth login', not with an API key")
+		return "", "", false
+	}
+	if claims.PendingDevice() {
+		writeDeviceRefusal(w, authsvc.ErrDevicePendingApproval)
+		return "", "", false
+	}
+	if claims.Did == "" && !h.requireNoDevicePolicy(w, r, namespace, claims.Sub) {
 		return "", "", false
 	}
 	return claims.Sub, namespace, true

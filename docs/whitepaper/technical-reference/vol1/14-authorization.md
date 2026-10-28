@@ -310,6 +310,24 @@ A namespace's **attestation policy** (`core/pkg/gateway/auth/attestation_policy.
 
 **Sockets.** A WebSocket the middleware judged at its upgrade carries the namespace on its context; the handlers register it with `HoldToAttestation`, and the socket sweeper asks its `wssession.Gate` (`attestationSocketGate`) every pass: under `enforce`, a socket whose current token the policy no longer admits is closed with `4403` and the code as the reason. A socket opened while the mode was `off` is not held. A capability carries no credential when used, so in a namespace that enforces `capability_mint` and `storage_fetch_cap_mint` refuse an invocation whose caller has no attestation (`core/pkg/serverless/hostfunctions/attestation.go`).
 
+### A pending device's session
+
+Under the `function` device policy a device beyond the account's first holds a restricted session until one of the namespace's functions approves it ([devices admitted by a function](13-identity.md#devices-admitted-by-a-function)). Its access token is minted for the audience `gateway-pending-device`, which a gateway from before the policy refuses outright. What such a session may reach is part of each route's declared policy (`routepolicy.Policy.PendingDevice`), and the zero value refuses it, so a route nobody decided about is closed to pending devices whether or not it is open to everyone else:
+
+| Access | Routes |
+|---|---|
+| own session (`PendingOwnSession`) | `/v1/auth/jwks`, `/.well-known/jwks.json`, `/v1/auth/challenge`, `/v1/auth/verify`, `/v1/auth/refresh`, `/v1/auth/logout` (its own session; `all: true` is refused), `/v1/auth/whoami` (`grants: []`), `/v1/attest/challenge`, `/v1/attest/ios`, `/v1/attest/android` |
+| function invoke (`PendingFunctionInvoke`) | `/v1/invoke/`, `/v1/functions/{name}/invoke`, `/v1/functions/{name}/ws` |
+| refused (`PendingRefused`, everything else) | among them `/v1/auth/devices*`, `/v1/auth/sessions*`, `/v1/auth/token`, pub/sub, storage, cache, push, WebRTC, the database and every control-plane route |
+
+**The gate** (`core/pkg/gateway/pending_device_gate.go:pendingDeviceGate`) sits directly inside `authMiddleware`, the first point that knows the caller, on the gateway that serves the request whether the identity came from the token or from a hop; the index gateway runs the same check (`admitsPendingDevice`) before it forwards a request to a namespace gateway, so a refused request goes no further. The refusal is `403 DEVICE_PENDING_APPROVAL` with `device_id`. The handlers of the devices and sessions routes refuse a pending token again (`sessionOwner`) as a backstop.
+
+**Functions.** On a function route the invoker decides, in `Invoker.Invoke` after authorization (`core/pkg/serverless/pending_device.go:PendingDeviceMayInvoke`): a pending caller runs only a function deployed with `open_to_pending_devices: true`, otherwise `403 DEVICE_PENDING_APPROVAL`. Every way a function is reached goes through it: HTTP, each frame of a stateless socket, and a nested `function_invoke`, which carries the caller's device state from its parent, so an open function cannot forward a pending caller to a closed one. A persistent socket never reaches the invoker, so the socket handler refuses a pending caller before the upgrade unless the function is open, and an `auth.refresh` frame cannot install a pending token on a socket to a closed function. A pending session is never an admin for a function (`getCallerIsAdminFromRequest`), whatever its account's grant, since admin passes over `internal` and `invocable_by`.
+
+The rule composes with `invocable_by` ([serverless](21-serverless.md)) as two rules judged on every hop: `invocable_by` says which functions may call the child, `open_to_pending_devices` whether a pending session may run it at all. A pending device calling an open router that forwards to a handler reaches the handler only when the handler is open to pending devices too, and a handler that is open but invocable only by the router is still refused to the pending device directly.
+
+**Across the hop** the pending session's subject travels in `X-Internal-Auth-JWT-Pending-Sub`, covered by hop MAC v8, and the v1 subject is left empty ([inter-node trust](15-inter-node-trust.md#the-internal-auth-hop)). A namespace gateway that predates v8 drops the field and sees no caller, so it runs for the pending session only what it would run for anybody; an upgraded one rebuilds the claims with the pending audience and refuses a pending subject that names no device.
+
 ### Consistency and caching
 
 Authorization state lives in the cluster registry (the index gateway's RQLite), never in a tenant's database: a tenant's owner can export that database whole and replace it by import, so anything the platform kept there would be state its subject can rewrite and the rest of the cluster never sees. A namespace gateway reaches the registry through a second client (`grantDB`), and a test fails when a migration creates a table nobody has placed in one database.
@@ -409,7 +427,8 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 | `DEVICE_PROOF_INVALID` | 401 | the proof is malformed, reused, or not the device's |
 | `DEVICE_PROOF_CLOCK_SKEW` | 401 | the proof's time is more than 60 s from the gateway's clock; `server_time` is the gateway's clock (unix seconds) |
 | `DEVICE_REVOKED` | 403 | the device was revoked; its key can never hold a session again |
-| `DEVICE_PENDING` | 403 (202 on sign-in) | the device waits for another of the account's devices to approve it |
+| `DEVICE_PENDING` | 403 (202 on sign-in) | the device waits for another of the account's devices to approve it; under the function policy, a pending device's refresh after the namespace left the policy |
+| `DEVICE_PENDING_APPROVAL` | 403 | a pending device's restricted session asked for a route, or a function, not open to it; `device_id` is the device ([a pending device's session](#a-pending-devices-session)) |
 | `DEVICE_NOT_FOUND` | 404 | the account has no such device |
 | `DEVICE_KEY_TAKEN` | 403 | the key is enrolled for another account |
 | `DEVICE_USER_CODE_MALFORMED` | 400 | a device-flow user code is not the shape the gateway issues |

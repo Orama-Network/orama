@@ -223,8 +223,9 @@ func (r *Registry) Register(ctx context.Context, fn *FunctionDefinition, wasmByt
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			invocable_by,
+			open_to_pending_devices
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	callerRequests, callerWindow, ipRequests, ipWindow := fn.RateLimit.columns()
 	_, err = r.db.Exec(ctx, query,
@@ -236,6 +237,7 @@ func (r *Registry) Register(ctx context.Context, fn *FunctionDefinition, wasmByt
 		fn.RawHTTPResponse, fn.WSAuth,
 		callerRequests, callerWindow, ipRequests, ipWindow,
 		invocableByColumn(fn.InvocableBy),
+		fn.OpenToPendingDevices,
 	)
 	if err != nil {
 		return nil, &DeployError{FunctionName: fn.Name, Cause: fmt.Errorf("failed to register function: %w", err)}
@@ -296,7 +298,8 @@ func (r *Registry) Get(ctx context.Context, namespace, name string, version int)
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 			FROM functions
 			WHERE namespace = ? AND name = ? AND status = ?
 			ORDER BY version DESC
@@ -322,7 +325,8 @@ func (r *Registry) Get(ctx context.Context, namespace, name string, version int)
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 			FROM functions
 			WHERE namespace = ? AND name = ? AND version = ?
 		`
@@ -370,7 +374,8 @@ func (r *Registry) List(ctx context.Context, namespace string) ([]*Function, err
 			f.raw_http_response, f.ws_auth,
 			f.rate_limit_caller_requests, f.rate_limit_caller_window_sec,
 			f.rate_limit_ip_requests, f.rate_limit_ip_window_sec,
-			f.invocable_by
+			f.invocable_by,
+			f.open_to_pending_devices
 		FROM functions f
 		INNER JOIN (
 			SELECT namespace, name, MAX(version) as max_version
@@ -709,7 +714,8 @@ func (r *Registry) GetByID(ctx context.Context, id string) (*Function, error) {
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 		FROM functions
 		WHERE id = ?
 	`
@@ -737,7 +743,8 @@ func (r *Registry) ListVersions(ctx context.Context, namespace, name string) ([]
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 		FROM functions
 		WHERE namespace = ? AND name = ?
 		ORDER BY version DESC
@@ -771,7 +778,8 @@ func (r *Registry) ListAll(ctx context.Context, namespace string) ([]*Function, 
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 		FROM functions
 		WHERE namespace = ?
 		ORDER BY name, version DESC
@@ -1123,7 +1131,8 @@ func (r *Registry) getByNameInternal(ctx context.Context, namespace, name string
 			raw_http_response, ws_auth,
 			rate_limit_caller_requests, rate_limit_caller_window_sec,
 			rate_limit_ip_requests, rate_limit_ip_window_sec,
-			invocable_by
+			invocable_by,
+			open_to_pending_devices
 		FROM functions
 		WHERE namespace = ? AND name = ?
 		ORDER BY version DESC
@@ -1215,6 +1224,9 @@ func (r *Registry) rowToFunction(row *functionRow) *Function {
 		// The functions that may invoke this one (feat-971). Without reading
 		// it back the invoker would admit every caller the function refuses.
 		InvocableBy: invocableByFromColumn(row.InvocableBy),
+		// Whether a pending device's session may invoke it (feat-973).
+		// Without reading it back no function would ever be open to one.
+		OpenToPendingDevices: row.OpenToPendingDevices,
 	}
 }
 
@@ -1294,6 +1306,10 @@ type functionRow struct {
 	// InvocableBy is the function's parents joined by invocableBySeparator,
 	// "" for none (migration 097, feat-971).
 	InvocableBy string `db:"invocable_by"`
+
+	// OpenToPendingDevices (feat-973, migration 099). False, closed, for
+	// every function deployed before the column.
+	OpenToPendingDevices bool `db:"open_to_pending_devices"`
 }
 
 type envVarRow struct {

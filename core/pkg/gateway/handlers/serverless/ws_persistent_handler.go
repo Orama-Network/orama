@@ -298,6 +298,7 @@ func (h *ServerlessHandlers) buildPersistentInvocationContext(
 		CallerClaims:      h.getCallerClaimsFromRequest(r),
 		CallerJWTSubject:  h.getJWTSubjectFromRequest(r),
 		CallerDeviceID:    h.getDeviceIDFromRequest(r),
+		CallerDeviceState: h.getDeviceStateFromRequest(r),
 		CallerAttestation: h.getAttestationFromRequest(r),
 		CallerCapability:  socketCapability(r),
 		WSClientID:        clientID,
@@ -424,6 +425,19 @@ func (h *ServerlessHandlers) handleAuthRefresh(
 		})
 	}
 
+	// A pending device's restricted session is installed only on a socket to
+	// a function open to pending devices, as it could only have opened one.
+	if err := serverless.PendingDeviceMayInvoke(fn, claims.DeviceState()); err != nil {
+		h.logger.Warn("persistent WS: auth.refresh rejected",
+			zap.String("client_id", clientID),
+			zap.Error(err))
+		return h.writeControlAck(conn, oramaControlAck{
+			Type:  "auth.refresh",
+			OK:    false,
+			Error: err.Error(),
+		})
+	}
+
 	// A token for another subject is refused before anything changes — a
 	// refresh keeps this socket open, it does not hand it to somebody else,
 	// and ws_open ran for the original identity.
@@ -503,6 +517,7 @@ func refreshedInvocationContext(
 		CallerClaims:      customClaims,
 		CallerJWTSubject:  claims.Sub,
 		CallerDeviceID:    claims.Did,
+		CallerDeviceState: claims.DeviceState(),
 		CallerAttestation: callerAttestation(claims.Att),
 		CallerIP:          prevIP,
 		CallerIsAdmin:     prevIsAdmin,

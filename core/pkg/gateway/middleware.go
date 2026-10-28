@@ -142,8 +142,14 @@ func setInternalAuthJWTHeaders(h http.Header, claims *auth.JWTClaims) {
 	if claims == nil {
 		return
 	}
+	// A pending device's subject goes in a field only a gateway that knows
+	// about pending devices reads (v8): to an older one the hop has no caller.
+	subjectHeader := HeaderInternalAuthJWTSub
+	if claims.PendingDevice() {
+		subjectHeader = HeaderInternalAuthJWTPendingSub
+	}
 	if sub := strings.TrimSpace(claims.Sub); sub != "" {
-		h.Set(HeaderInternalAuthJWTSub, sub)
+		h.Set(subjectHeader, sub)
 	}
 	if len(claims.Custom) > 0 {
 		buf, err := json.Marshal(claims.Custom)
@@ -261,18 +267,28 @@ func stripJWTQueryParam(r *http.Request) {
 // refused with an error.
 func claimsFromInternalAuthHeaders(h http.Header, namespace string, now time.Time) (*auth.JWTClaims, error) {
 	sub := strings.TrimSpace(h.Get(HeaderInternalAuthJWTSub))
+	audience := auth.AudienceGateway
+	if sub == "" {
+		sub = strings.TrimSpace(h.Get(HeaderInternalAuthJWTPendingSub))
+		audience = auth.AudiencePendingDevice
+	}
 	if sub == "" {
 		return nil, nil
+	}
+	did := strings.TrimSpace(h.Get(HeaderInternalAuthJWTDid))
+	if audience == auth.AudiencePendingDevice && did == "" {
+		return nil, fmt.Errorf("the forwarded pending session names no device")
 	}
 	exp, iat, err := hopTokenTimes(h, now)
 	if err != nil {
 		return nil, err
 	}
 	claims := &auth.JWTClaims{
+		Aud:       audience,
 		Sub:       sub,
 		Namespace: namespace,
 		Jti:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTJti)),
-		Did:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTDid)),
+		Did:       did,
 		Sid:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTSid)),
 		Exp:       exp,
 		Iat:       iat,
@@ -835,7 +851,7 @@ func (g *Gateway) tunnelWebSocket(w http.ResponseWriter, r *http.Request, target
 func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 	// Order: internal-auth -> route policy -> logging -> security headers ->
 	// CORS -> rate limit -> readiness -> domain routing -> cluster serverless
-	// routing -> auth -> traffic attribution -> attestation -> authorization ->
+	// routing -> auth -> pending-device gate -> traffic attribution -> attestation -> authorization ->
 	// scope -> namespace rate limit -> long-request deadlines -> handler
 	//
 	// CORS is above the rate limit so that a refusal by the limiter (a 429)
@@ -870,6 +886,11 @@ func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 	// deliver. It stays above domain routing and auth, so no handler and no
 	// WebSocket upgrade is reached while the gateway cannot serve.
 	//
+	// The pending-device gate sits directly inside auth, the first point that
+	// knows the caller, so a pending device's restricted session is refused on
+	// every route that does not admit one before anything acts for it
+	// (pending_device_gate.go).
+	//
 	// The scope gate (bugboard #148) runs after ownership so it only ever
 	// tightens an already-authorized request; it never authorizes on its own.
 	//
@@ -890,11 +911,12 @@ func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 								g.domainRoutingMiddleware(
 									g.clusterServerlessRoutingMiddleware(
 										g.authMiddleware(
-											g.trafficAttributionMiddleware(
-												g.attestationMiddleware(
-													g.authorizationMiddleware(
-														g.scopeMiddleware(
-															g.namespaceRateLimitMiddleware(longRequestDeadlines(next)))))))))))))))))
+											g.pendingDeviceGate(
+												g.trafficAttributionMiddleware(
+													g.attestationMiddleware(
+														g.authorizationMiddleware(
+															g.scopeMiddleware(
+																g.namespaceRateLimitMiddleware(longRequestDeadlines(next))))))))))))))))))
 }
 
 // securityHeadersMiddleware adds standard security headers to all responses
@@ -1840,6 +1862,12 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 			zap.Int("raw_query_len", len(r.URL.RawQuery)),
 		)
 		unauthorized(w, CodeAuthMissing, "no credential was presented", nil)
+		return
+	}
+
+	// A pending device's session goes no further than this gateway on a route
+	// that does not admit it.
+	if !g.admitsPendingDevice(w, r, validatedClaims) {
 		return
 	}
 

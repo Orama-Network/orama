@@ -37,6 +37,10 @@ const (
 	ErrCodeDeviceRevoked = "DEVICE_REVOKED"
 	// ErrCodeDevicePending: the device waits for another device's approval.
 	ErrCodeDevicePending = "DEVICE_PENDING"
+	// ErrCodeDevicePendingApproval: the caller's session is a pending device's
+	// restricted one (the function policy), which reaches only its own session
+	// and the functions open to pending devices.
+	ErrCodeDevicePendingApproval = "DEVICE_PENDING_APPROVAL"
 	// ErrCodeDeviceNotFound: the account has no such device.
 	ErrCodeDeviceNotFound = "DEVICE_NOT_FOUND"
 	// ErrCodeDeviceKeyTaken: the key is enrolled for another account.
@@ -80,8 +84,10 @@ var deviceRefusals = []struct {
 		"this device's clock is off: stamp the proof's iat on the gateway's clock (server_time here, or any answer's Date header) and sign a new proof"}},
 	{authsvc.ErrDeviceRevoked, deviceRefusal{http.StatusForbidden, ErrCodeDeviceRevoked,
 		"this device key can never sign in again; generate a new key and link it from a device that is still signed in"}},
+	{authsvc.ErrDevicePendingApproval, deviceRefusal{http.StatusForbidden, ErrCodeDevicePendingApproval,
+		"finish the application's own admission of this device (its functions open to pending devices), then refresh the session"}},
 	{authsvc.ErrDevicePending, deviceRefusal{http.StatusForbidden, ErrCodeDevicePending,
-		"approve this device from one of the account's signed-in devices"}},
+		"approve this device: from one of the account's signed-in devices, or, under the function policy, through the application"}},
 	{authsvc.ErrDeviceNotFound, deviceRefusal{http.StatusNotFound, ErrCodeDeviceNotFound,
 		"list this account's devices with GET /v1/auth/devices"}},
 	{authsvc.ErrSignInClosed, deviceRefusal{http.StatusForbidden, ErrCodeSignInClosed,

@@ -18,9 +18,12 @@ import (
 
 // signInBinding is what a verified sign-in binds.
 type signInBinding struct {
-	// deviceID is the active device the session is bound to, or "" for a
-	// session bound to the account alone.
+	// deviceID is the device the session is bound to, or "" for a session
+	// bound to the account alone.
 	deviceID string
+	// pendingSession is set when deviceID is pending under the function
+	// policy: the sign-in yields the device's restricted session.
+	pendingSession bool
 	// pending is set when the device was enrolled but must be approved from
 	// another of the account's devices first: the sign-in yields no session,
 	// only the pending login the device waits on.
@@ -90,9 +93,21 @@ func provenDeviceKey(named string, req VerifyRequest) (*authsvc.DeviceKey, error
 //
 // Under the approval policy a device beyond the account's first starts
 // pending, and the wallet signature buys it a user code to show on a device
-// already signed in — not a session.
+// already signed in — not a session. Under the function policy a device beyond
+// the first the account ever had starts pending too, and the signature buys it
+// the restricted session a pending device holds until a function approves it.
 func (h *Handlers) enrolSignInDevice(w http.ResponseWriter, r *http.Request, in *signedIn, key *authsvc.DeviceKey, label string, policy authsvc.DevicePolicy) (signInBinding, bool) {
 	ctx := r.Context()
+	if policy == authsvc.DevicePolicyFunction {
+		device, err := h.authService.EnrolFirstOrPendingDevice(ctx, in.Namespace, in.Wallet, key, label)
+		if err != nil {
+			if !writeDeviceRefusal(w, err) {
+				h.writeUnavailable(w, "enrol the device", err)
+			}
+			return signInBinding{}, false
+		}
+		return signInBinding{deviceID: device.ID, pendingSession: device.State == authsvc.DeviceStatePending}, true
+	}
 	state := authsvc.DeviceStateActive
 	if policy == authsvc.DevicePolicyApproval {
 		hasOne, err := h.authService.HasActiveDevice(ctx, in.Namespace, in.Wallet)

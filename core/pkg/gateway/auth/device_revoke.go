@@ -45,6 +45,14 @@ func (s *Service) RevokeDevice(ctx context.Context, namespace, subject, id strin
 		  WHERE id = ? AND state != 'revoked'`, id); err != nil {
 		return fmt.Errorf("tombstone device %s: %w", id, err)
 	}
+	return s.endDeviceSessions(ctx, id)
+}
+
+// endDeviceSessions revokes a tombstoned device's refresh tokens, the
+// reuse-grace slot of a just-rotated one included, and puts its id on the
+// revocation list, so its access tokens and sockets stop on every gateway
+// within the list's staleness.
+func (s *Service) endDeviceSessions(ctx context.Context, id string) error {
 	if _, err := s.db.Exec(client.WithInternalAuth(ctx),
 		`UPDATE refresh_tokens
 		    SET revoked_at = COALESCE(revoked_at, datetime('now')), grace_used_at = datetime('now')
@@ -123,7 +131,7 @@ func liveDevices(ctx context.Context, db client.DatabaseClient, nsID interface{}
 // handler answers with the device's own code rather than a generic one.
 func IsDeviceError(err error) bool {
 	for _, target := range []error{
-		ErrDeviceNotFound, ErrDeviceRevoked, ErrDevicePending, ErrDeviceBelongsToAnother,
+		ErrDeviceNotFound, ErrDeviceRevoked, ErrDevicePending, ErrDevicePendingApproval, ErrDeviceBelongsToAnother,
 		ErrDeviceKeyInvalid, ErrDeviceSignatureInvalid, ErrDeviceProofRequired, ErrDeviceProofInvalid, ErrDeviceProofClockSkew,
 	} {
 		if errors.Is(err, target) {

@@ -45,6 +45,8 @@ func classifyInvokeError(err error) (int, httputil.RPCErrorCode, bool) {
 		return http.StatusForbidden, httputil.ErrCodeFunctionNotDirectlyInvocable, false
 	case serverless.IsUnauthorized(err):
 		return http.StatusUnauthorized, httputil.ErrCodeUnauthorized, false
+	case serverless.IsDevicePendingApproval(err):
+		return http.StatusForbidden, httputil.ErrCodeDevicePendingApproval, false
 	default:
 		return http.StatusInternalServerError, httputil.ErrCodeFunctionExecution, false
 	}
@@ -118,6 +120,7 @@ func (h *ServerlessHandlers) InvokeFunction(w http.ResponseWriter, r *http.Reque
 		CallerClaims:      h.getCallerClaimsFromRequest(r),
 		CallerJWTSubject:  h.getJWTSubjectFromRequest(r),
 		CallerDeviceID:    h.getDeviceIDFromRequest(r),
+		CallerDeviceState: h.getDeviceStateFromRequest(r),
 		CallerAttestation: h.getAttestationFromRequest(r),
 	}
 

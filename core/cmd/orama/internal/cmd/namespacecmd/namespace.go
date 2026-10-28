@@ -166,9 +166,12 @@ left out keeps its value.
                       wallet reaches. Closing it again ends those sessions at
                       their next refresh. A namespace nobody owns stays closed.
 
-  --device-policy     optional | required | approval: what an end user's
-                      sign-in must bind. Requiring devices revokes the sign-in
-                      keys end users already hold.
+  --device-policy     optional | required | approval | function: what an end
+                      user's sign-in must bind. Requiring devices revokes the
+                      sign-in keys end users already hold. function: an
+                      account's first device is active, and each later one
+                      gets a restricted session until one of the namespace's
+                      functions approves it (approve_device).
 
   --end-user-topics   the pub/sub topics an end user may subscribe to, list and
                       see presence on, comma-separated patterns ('*' matches any
@@ -273,7 +276,7 @@ func init() {
 	webrtcStatusCmd.Flags().String("namespace", "", "Namespace name")
 	sessionPolicyCmd.Flags().String("namespace", "", "Namespace name")
 	sessionPolicyCmd.Flags().String("sign-in", "", "Who may sign in: members | open")
-	sessionPolicyCmd.Flags().String("device-policy", "", "What an end user's sign-in must bind: optional | required | approval")
+	sessionPolicyCmd.Flags().String("device-policy", "", "What an end user's sign-in must bind: optional | required | approval | function")
 	sessionPolicyCmd.Flags().StringSlice("end-user-topics", nil, "Pub/sub topic patterns end users may read, comma-separated; '' clears the list")
 	sessionPolicyCmd.Flags().String("per-ip-limits", "", "Per-client-network ceilings: on | off")
 	sessionPolicyCmd.Flags().Int("new-wallets-per-ip-hour", 0, "When per-IP limits are on: new wallets one network may sign in per hour")

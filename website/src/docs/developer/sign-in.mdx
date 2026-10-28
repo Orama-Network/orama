@@ -87,7 +87,7 @@ An end user is a wallet the namespace never invited, and it stays one:
 - Signing in writes nothing. No grant, no membership, no claim on the namespace; the owner is still the only owner.
 - It gets a session and **no API key**. `verify` returns no `api_key`, and `POST /v1/auth/api-key` answers `ROLE_HAS_NO_KEY`. A key is a member's credential.
 - Its permissions are what a wallet with no grant holds: storage, cache, push, webrtc, proxy, invoking functions, and *reading* the pub/sub topics the namespace lists for its end users, none until the owner names them (`orama namespace session-policy --end-user-topics`), but not publishing to any (a topic an end user writes to is the application's decision, made from a function or by a grant). Nothing on the control plane.
-- The device policy applies as to any end user: under `required` or `approval` it must bind a device ([Devices](/docs/developer/devices)).
+- The device policy applies as to any end user: under `required`, `approval` or `function` it must bind a device, and under `function` an account's later devices sign in to a restricted session the namespace's functions admit, marked `device_state: "pending"` in the answer ([Devices](/docs/developer/devices#devices-admitted-by-a-function)).
 
 The lobby has no policy and refuses to be given one, and a namespace with no owner stays closed whatever it says. Members are unaffected either way.
 

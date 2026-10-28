@@ -99,6 +99,11 @@ type InvokeRequest struct {
 	// `did` of a token the gateway verified — or "" for a session bound to the
 	// account alone, an API key, or no credential.
 	CallerDeviceID string `json:"caller_device_id,omitempty"`
+	// CallerDeviceState is the state of that device the verified token names:
+	// CallerDevicePending for a pending device's restricted session, which the
+	// invoker runs only functions open to pending devices for,
+	// CallerDeviceActive, or "".
+	CallerDeviceState string `json:"caller_device_state,omitempty"`
 	// CallerAttestation is what the caller's device attestation proved, from
 	// the verified token's `att` claim, or nil.
 	CallerAttestation *CallerAttestation `json:"caller_attestation,omitempty"`
@@ -217,6 +222,18 @@ func (i *Invoker) Invoke(ctx context.Context, req *InvokeRequest) (*InvokeRespon
 		}, ErrUnauthorized
 	}
 
+	// A pending device's session runs only what the namespace opened to it —
+	// whichever path asked: HTTP, a socket frame, or a function_invoke from a
+	// function that is open to it calling one that is not.
+	if err := PendingDeviceMayInvoke(fn, req.CallerDeviceState); err != nil {
+		return &InvokeResponse{
+			RequestID:  requestID,
+			Status:     InvocationStatusError,
+			Error:      err.Error(),
+			DurationMS: time.Since(startTime).Milliseconds(),
+		}, err
+	}
+
 	// Get environment variables
 	envVars, err := i.getEnvVars(ctx, fn.ID)
 	if err != nil {
@@ -279,6 +296,9 @@ func newInvocationContext(req *InvokeRequest, fn *Function, requestID string, en
 		CallerClaims:     req.CallerClaims,
 		CallerJWTSubject: req.CallerJWTSubject,
 		CallerDeviceID:   req.CallerDeviceID,
+		// A nested call is the same caller: a pending device stays pending
+		// through every function_invoke it reaches.
+		CallerDeviceState: req.CallerDeviceState,
 		// A nested call is the same caller: its attestation goes with it.
 		CallerAttestation: req.CallerAttestation,
 		CallerCapability:  req.CallerCapability,

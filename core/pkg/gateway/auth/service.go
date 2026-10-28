@@ -464,6 +464,22 @@ func (s *Service) IssueTokens(ctx context.Context, wallet, namespace string) (st
 // and kept across refresh-token rotations, so ending the session refuses every
 // access token it minted.
 func (s *Service) IssueDeviceTokens(ctx context.Context, wallet, namespace, deviceID string) (string, string, int64, error) {
+	return s.issueSession(ctx, wallet, namespace, deviceID, false)
+}
+
+// IssuePendingDeviceTokens issues the restricted session of a device still
+// pending under the function policy. The caller has enrolled the device as the
+// account's, pending. Its access tokens are for AudiencePendingDevice; its
+// refresh mints the same until a function approves the device, and a full
+// session from then on (checkSessionRefresh).
+func (s *Service) IssuePendingDeviceTokens(ctx context.Context, wallet, namespace, deviceID string) (string, string, int64, error) {
+	if deviceID == "" {
+		return "", "", 0, fmt.Errorf("%w: a pending session is a device's", ErrDeviceKeyInvalid)
+	}
+	return s.issueSession(ctx, wallet, namespace, deviceID, true)
+}
+
+func (s *Service) issueSession(ctx context.Context, wallet, namespace, deviceID string, pending bool) (string, string, int64, error) {
 	if s.signingKey == nil {
 		return "", "", 0, fmt.Errorf("signing key unavailable")
 	}
@@ -496,7 +512,7 @@ func (s *Service) IssueDeviceTokens(ctx context.Context, wallet, namespace, devi
 	if err != nil {
 		return "", "", 0, fmt.Errorf("read the device's attestation: %w", err)
 	}
-	binding := SessionBinding{DeviceID: deviceID, SessionID: sessionID, Attestation: att}
+	binding := SessionBinding{DeviceID: deviceID, SessionID: sessionID, Attestation: att, Pending: pending}
 	token, expUnix, err := s.GenerateBoundJWT(namespace, wallet, AccessTokenLifetime, custom, binding)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("failed to generate JWT: %w", err)
@@ -726,7 +742,8 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken, namespace stri
 	// A session bound to a device is refreshed by the device, not by whoever
 	// holds its refresh token. Checked before the rotation below, so a thief
 	// holding only the token cannot burn the device's session by trying.
-	if err := s.checkSessionRefresh(ctx, namespace, session, refreshToken, proof); err != nil {
+	pending, err := s.checkSessionRefresh(ctx, namespace, session, refreshToken, proof)
+	if err != nil {
 		return "", "", "", 0, err
 	}
 	// Only now is the reuse grace spent: a caller who could not show the device
@@ -821,7 +838,7 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken, namespace stri
 	// Step 3: mint the new access JWT, carrying forward the stored custom
 	// claims so a rotated token keeps the same account_id etc. (bugboard #548).
 	accessToken, expUnix, err = s.GenerateBoundJWT(namespace, subject, AccessTokenLifetime, custom,
-		SessionBinding{DeviceID: session.deviceID, SessionID: session.sessionID, Attestation: att})
+		SessionBinding{DeviceID: session.deviceID, SessionID: session.sessionID, Attestation: att, Pending: pending})
 	if err != nil {
 		return "", "", "", 0, fmt.Errorf("%w: generate access token: %v", ErrRefreshTransient, err)
 	}

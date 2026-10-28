@@ -129,8 +129,10 @@ export interface DeviceInfo {
 
 /**
  * A sign-in whose device must be approved from another of the account's
- * devices first (`202`). Show `user_code` there; then collect the session with
- * `claimDeviceLink(device_code, namespace)`.
+ * devices first (`202`, the approval device policy). Show `user_code` there;
+ * then collect the session with `claimDeviceLink(device_code, namespace)`.
+ * Under the function policy a later device gets a session at once instead,
+ * with `device_state: "pending"` (see `AuthClient.deviceState()`).
  */
 export interface PendingDeviceApproval {
   status: "pending_approval";

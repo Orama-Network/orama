@@ -21,7 +21,11 @@ import (
 // revocation from one carries the device's proof: an access token lifted off a
 // device must not be able to sign the account out of every other one. A token
 // bound to no device is the account's own session — the wallet's — and may act
-// on any of the account's devices.
+// on any of the account's devices — where the namespace lets the wallet alone
+// be the account, which is the optional policy (or a wallet that operates the
+// namespace, which is held to it). Under any other policy sessionOwner refuses
+// such a token. A pending device's restricted session reaches none of these
+// routes.
 
 // DeviceApproveRequest approves a pending device link. The proof is the
 // approving device's, over the user code (see authsvc.DeviceProofMessage).
@@ -227,8 +231,9 @@ func (h *Handlers) recordDeviceApproval(r *http.Request, namespace string, claim
 
 // deviceCaller is whose devices these are: the caller's token's subject, in
 // its namespace. A token bound to a device acts only while that device is
-// active — a pending device has no session, and a revoked one's tokens are
-// refused before they get here, so this is the backstop, not the gate.
+// active — a pending device's session is refused by the route policy and by
+// sessionOwner, and a revoked one's tokens are refused before they get here,
+// so this is the backstop, not the gate.
 func (h *Handlers) deviceCaller(w http.ResponseWriter, r *http.Request) (*authsvc.JWTClaims, string, bool) {
 	subject, namespace, ok := h.sessionOwner(w, r)
 	if !ok {

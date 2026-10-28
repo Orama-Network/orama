@@ -987,6 +987,9 @@ func initializeServerless(logger *logging.ColoredLogger, cfg *Config, deps *Depe
 	// A function asks for the verdict on its caller's attestation under the
 	// policy requests are judged by (feat-965).
 	hostFuncs.SetAttestationJudge(serverlesshandlers.NewAttestationJudge(authService))
+	// A namespace under the function device policy admits its users' devices
+	// from its own functions (feat-973).
+	hostFuncs.SetDeviceAdmitter(authService)
 
 	logger.ComponentInfo(logging.ComponentGeneral, "Serverless function engine ready",
 		zap.Int("default_memory_mb", engineCfg.DefaultMemoryLimitMB),

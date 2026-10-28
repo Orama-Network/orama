@@ -219,14 +219,20 @@ func (h *Handlers) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 		Result:    authsvc.AuditSuccess,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"access_token":  token,
 		"token_type":    "Bearer",
 		"expires_in":    int(expUnix - time.Now().Unix()),
 		"refresh_token": newRefreshToken,
 		"subject":       subject,
 		"namespace":     req.Namespace,
-	})
+	}
+	// A device-bound session says what its device is now: a pending device's
+	// refresh after a function approved it is the first full session.
+	if state := authsvc.MintedDeviceState(token); state != "" {
+		body["device_state"] = state
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // LogoutHandler revokes refresh tokens.
@@ -272,6 +278,11 @@ func (h *Handlers) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if subject == "" {
 			writeError(w, http.StatusUnauthorized, "jwt required for all=true")
+			return
+		}
+		// A pending device ends its own session and no other.
+		if claims.PendingDevice() {
+			writeDeviceRefusal(w, authsvc.ErrDevicePendingApproval)
 			return
 		}
 		// From a session bound to a device, ending every session of the

@@ -99,6 +99,12 @@ invocable_by:           # Optional. The functions of the namespace that may
                         # is refused 403 FUNCTION_NOT_DIRECTLY_INVOCABLE (see
                         # "Invocable by" below). Empty (default): any caller
                         # public/private admits.
+open_to_pending_devices: false
+                        # Optional. Whether a device the namespace has not yet
+                        # admitted (device policy function) may invoke this
+                        # function; every other function refuses it
+                        # 403 DEVICE_PENDING_APPROVAL (see "Open to pending
+                        # devices" below). Default false.
 ```
 
 ### function.go
@@ -286,6 +292,7 @@ If you see the runtime error `failed to instantiate module: module[X] not instan
 | `get_caller_wallet()` → string | Resolved caller wallet (JWT subject if Bearer auth, else namespace pseudo-id when API-key auth). |
 | `get_caller_jwt_subject()` → string | JWT `sub` claim explicitly. Empty when the request was not JWT-authenticated. Use this when binding on the JWT-signed identity matters (e.g. signup flows verifying the caller signed for the wallet they're registering). |
 | `get_caller_device_id()` → string | The device the caller's session is bound to: the RFC 7638 thumbprint of a key the device proved it holds when the session was issued (the token's `did`). Empty for a session bound to the account alone, an API key, or no credential. Set only by the gateway — a claims provider cannot, and a client cannot state it. Carried into nested `function_invoke` calls. Requires gateway 0.200.0 or later on every node of the namespace. See the technical reference's identity chapter (`docs/whitepaper/technical-reference/vol1/13-identity.md`). |
+| `get_caller_device_state()` → string | The state of the device the caller's session is bound to: `pending` for a device the namespace's functions have yet to admit (device policy `function`), `active` for an admitted one, empty for a session bound to no device, an API key, or no credential. Set only by the gateway. See [Open to pending devices](#open-to-pending-devices). |
 | `get_caller_attestation()` → string | What the caller's device attestation proved, as JSON `{"platform", "app_id", "app_version", "attested_at"}` plus, where set, `development`, `grapheneos`, `signing_cert_digests` and `os_patch_level`, or empty when the caller's token carries none. It comes from the token's signed `att` claim; nothing in the request reaches it. Carried into nested `function_invoke` calls. It says the session attested, not that the attestation still passes: ask `get_caller_attestation_verdict` for that. See [Device attestation](/docs/developer/device-attestation#in-a-function). |
 | `get_caller_attestation_verdict()` → string | The gateway's verdict on the caller under the namespace's attestation policy as it is at the call, in every mode (`monitor` included), as JSON `{"mode", "verdict", "reason", "message"}`. `verdict` is `admitted`, `attestation_required`, `app_update_required`, `attestation_invalid` (`reason` names the check, e.g. `signing_cert`), `not_configured` (mode `off`) or `unavailable` (the policy cannot be read; retry). Grant something only to the genuine app by refusing anything but `admitted`. See [Device attestation](/docs/developer/device-attestation#in-a-function). |
 | `get_caller_capability()` → string | What the capability the caller's socket was opened with grants, as JSON `{"cap_id","resource","issuer_device","expires_at"}`. Empty when the caller came in on a credential. Not carried into nested `function_invoke` calls. See [Capabilities](#capabilities). |
@@ -1209,6 +1216,35 @@ The check reads the function row the invocation already fetches, so it adds no
 database call. It holds once every gateway of the namespace runs a release that
 has it (0.3.12 or later): during a rolling upgrade a gateway still on an older
 release does not read the field and admits a direct call.
+
+### Open to pending devices
+
+Under the device policy `function` ([Devices](/docs/developer/devices#devices-admitted-by-a-function)), an account's later devices sign in to a restricted session that reaches only the functions deployed with `open_to_pending_devices: true`, over `POST /v1/functions/{name}/invoke`, `POST /v1/invoke/{namespace}/{name}` and `/v1/functions/{name}/ws`. Every other function answers `403 DEVICE_PENDING_APPROVAL` with `device_id`, refused before a WebSocket upgrade. The open functions are where the application decides whether to admit the device:
+
+| Function | Description |
+|----------|-------------|
+| `get_caller_device_state()` → string | `pending`, `active` or empty (see [Context](#context)). |
+| `approve_device(subject, device)` → bool | Makes `subject`'s pending `device` active in this function's namespace. The device's next `POST /v1/auth/refresh` returns a full session. True when the device is active afterwards (approving an active device changes nothing); false, with the reason in the gateway log, when the device is not the account's, is revoked, or the namespace's policy is not `function`. |
+| `deny_device(subject, device)` → bool | Revokes `subject`'s pending `device`: its session, sockets and tokens stop on every gateway within ten seconds and its key cannot sign in again. False for an active or unknown device, or a policy other than `function`. |
+
+Strings come back packed as `ptr<<32 | len`, like the other `get_caller_*` calls; the two decisions return 1 or 0:
+
+```go
+//go:wasmimport env get_caller_device_state
+func getCallerDeviceState() uint64
+
+//go:wasmimport env approve_device
+func approveDevice(subPtr, subLen, devPtr, devLen uint32) uint32
+
+//go:wasmimport env deny_device
+func denyDevice(subPtr, subLen, devPtr, devLen uint32) uint32
+```
+
+Both act in the function's own namespace only, at most 16 times per invocation, and are recorded in the audit log as `auth.device.approve` / `auth.device.deny` by `function:<name>`. The gateway does not judge whether the approval is deserved: an open function that approves every caller lets any wallet signature add a device, so check what proves the request (a message signed by one of the account's active devices, the application's recovery secret) before approving.
+
+**With `invocable_by`.** Each rule is checked on every hop, on its own. A pending device that calls an open router, which calls a handler with `function_invoke`, is admitted to the handler only when the handler is open to pending devices too: a router cannot carry a pending session into a function that is closed to it. A handler that is open but `invocable_by: [rpc-router]` still refuses the pending device calling it directly, with `FUNCTION_NOT_DIRECTLY_INVOCABLE`. A pending session is never an admin, so it does not get the admin pass `internal` and `invocable_by` give.
+
+Like `invocable_by`, the field holds once every gateway of the namespace runs a release that has it (0.3.12 or later); set the device policy `function` only after that.
 
 ## WebSockets
 

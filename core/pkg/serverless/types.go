@@ -305,6 +305,11 @@ type FunctionDefinition struct {
 	// one (function.yaml invocable_by, feat-971); empty for any caller the
 	// usual rules admit. See function_invocable_by.go.
 	InvocableBy []string `json:"invocable_by,omitempty"`
+
+	// OpenToPendingDevices lets a pending device's restricted session (the
+	// function device policy, feat-973) invoke the function and open its
+	// WebSocket. False refuses one with DEVICE_PENDING_APPROVAL.
+	OpenToPendingDevices bool `json:"open_to_pending_devices,omitempty"`
 }
 
 // DBTriggerConfig defines a database trigger configuration.
@@ -366,6 +371,10 @@ type Function struct {
 	// one (function.yaml invocable_by, feat-971); empty for any caller the
 	// usual rules admit. See function_invocable_by.go.
 	InvocableBy []string `json:"invocable_by,omitempty"`
+
+	// OpenToPendingDevices: a pending device's restricted session may invoke
+	// it (feat-973). Enforced by the invoker (PendingDeviceMayInvoke).
+	OpenToPendingDevices bool `json:"open_to_pending_devices,omitempty"`
 }
 
 // InvocationContext provides context for a function invocation.
@@ -420,6 +429,12 @@ type InvocationContext struct {
 	// the account alone, an API key, or no credential. Read via host fn
 	// `get_caller_device_id`; like the subject, it is set only by the gateway.
 	CallerDeviceID string `json:"caller_device_id,omitempty"`
+
+	// CallerDeviceState is the state of that device when the caller's token
+	// was minted: "pending" for a pending device's restricted session (the
+	// function device policy), "active", or "" with no device. Read via host
+	// fn `get_caller_device_state`; set only by the gateway.
+	CallerDeviceState string `json:"caller_device_state,omitempty"`
 
 	// CallerAttestation is what the caller's device attestation proved
 	// (feat-941), or nil when the caller's token carries none. Read via host
@@ -810,6 +825,16 @@ type HostServices interface {
 	// caller under the namespace's attestation policy as it is now, as JSON
 	// (AttestationVerdict), or empty outside a gateway.
 	GetCallerAttestationVerdict(ctx context.Context) string
+	// GetCallerDeviceState returns the state of the device the caller's
+	// session is bound to when its token was minted: "pending", "active", or
+	// empty when it is bound to none (feat-973).
+	GetCallerDeviceState(ctx context.Context) string
+	// ApproveDevice makes a pending device of subject in the calling namespace
+	// active (the function device policy). device is a session's device id, as
+	// get_caller_device_id returns it.
+	ApproveDevice(ctx context.Context, subject, device string) error
+	// DenyDevice revokes a pending device of subject in the calling namespace.
+	DenyDevice(ctx context.Context, subject, device string) error
 	// GetCallerCapability returns what the caller's capability grants, as
 	// JSON, or empty when the caller came in on a credential.
 	GetCallerCapability(ctx context.Context) string

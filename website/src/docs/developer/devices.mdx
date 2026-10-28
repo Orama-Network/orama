@@ -71,7 +71,7 @@ DELETE /v1/auth/devices/{id}     revoke one
 
 Revoking tombstones the device, revokes its refresh tokens (including the reuse-grace slot a just-rotated one would still have) and puts `device:<id>` on the revocation list, so its access tokens and sockets stop within ten seconds on every gateway. The account's other devices are untouched. Push registrations made from the device end with it.
 
-Any of the account's sessions may revoke any of its devices: one bound to an active device, with that device's proof, or one bound to no device (which only the wallet can have made). The proof is what stops an access token lifted off one phone signing the account out of all the others. A session bound to a pending or revoked device can do nothing here.
+Any of the account's sessions may revoke any of its devices: one bound to an active device, with that device's proof, or, under the `optional` policy, one bound to no device (which only the wallet can have made). The proof is what stops an access token lifted off one phone signing the account out of all the others. Under any other policy a session bound to no device is refused here with `DEVICE_REQUIRED`: none is issued there, and one minted before the policy was set does not get to revoke the devices the policy now protects. A session bound to a pending or revoked device can do nothing here.
 
 Logging out everywhere is held to the same rule. `POST /v1/auth/logout` with `"all": true` ends every session of the account, its refresh tokens and the access tokens already issued. From a session bound to a device it carries that device's `logout-all` proof over the device's own id, or it is refused `DEVICE_PROOF_REQUIRED` and every session stays valid. A session bound to no device needs none.
 
@@ -93,8 +93,9 @@ With no active device left, the user's next sign-in enrols its device as the acc
 | `optional` (default) | A session bound to the account | Active |
 | `required` | Refused, `DEVICE_REQUIRED` | Active |
 | `approval` | Refused, `DEVICE_REQUIRED` | Active if it is the account's first; otherwise **pending** |
+| `function` | Refused, `DEVICE_REQUIRED` | Active if it is the account's first ever; otherwise **pending**, with a restricted session the namespace's functions decide on ([below](#devices-admitted-by-a-function)) |
 
-Under `required` and `approval`, nothing else hands an end user a credential bound to no device either: `POST /v1/auth/api-key` and approving a plain `orama auth login` device code answer `DEVICE_REQUIRED`, and so does refreshing an end user's session bound to no device, so turning the policy on ends those sessions at their next refresh, within fifteen minutes. Setting `required` or `approval` also **revokes every key an end user's sign-in minted** in the namespace, and the response says how many (`revoked_sign_in_keys`). If the sweep stops partway the policy is still set and audited and the answer is `503 POLICY_SWEEP_INCOMPLETE`; repeating the `PUT` finishes it.
+Under `required`, `approval` and `function`, nothing else hands an end user a credential bound to no device either: `POST /v1/auth/api-key` and approving a plain `orama auth login` device code answer `DEVICE_REQUIRED`, and so does refreshing an end user's session bound to no device, so turning the policy on ends those sessions at their next refresh, within fifteen minutes. Setting any policy but `optional` also **revokes every key an end user's sign-in minted** in the namespace, and the response says how many (`revoked_sign_in_keys`). If the sweep stops partway the policy is still set and audited and the answer is `503 POLICY_SWEEP_INCOMPLETE`; repeating the `PUT` finishes it.
 
 A wallet holding a control-plane role in the namespace (owner, admin, developer) is held to `optional` whatever the policy says. The policy protects the application's users; the people operating the namespace sign in from the CLI, which holds no device key, and whoever holds such a wallet can change the policy anyway.
 
@@ -118,9 +119,26 @@ new device                         gateway                   an active device
 
 Starting the link from the new device (`POST /v1/auth/device` with `device_key`) is **seedless linking**: no wallet is involved at all, and the new device takes its account from the device that approves it. Starting it from an approval-policy sign-in is **new-device approval**: the wallet already named the account, and only one of that account's devices may approve. Either way the approver proves it holds its own key over the user code, and collecting the session takes the new device's proof over the device code. The codes alone collect nothing, and the approving device must still be active when the new one collects: revoking a stolen approver reaches the device it let in. A device link cannot be approved with a wallet signature (`orama auth approve`), and a plain login cannot be approved by a device.
 
+## Devices admitted by a function
+
+The `function` policy is for an application that runs its own admission: a new phone sends a join request that an existing phone answers, and both show a code to compare; or an account that lost every device passes the application's recovery check. The new device needs a session while that runs, and the gateway needs to keep it at arm's length until the application says yes.
+
+Under `function`, the account's first device ever signs in active, as under `required`. Every later one signs in at once (`200`, not `202`) to a **restricted session**: the sign-in answer carries `device_state: "pending"` beside `device_id`, and its access tokens are minted for the audience `gateway-pending-device`. "First ever" counts revoked devices too, so an account whose devices were all revoked is recovering, and its next device is pending like any other: a stolen seed phrase gets no further once the owner's last device is gone.
+
+A restricted session reaches:
+
+- its own session: `POST /v1/auth/refresh`, `POST /v1/auth/logout` (its own session only; `all: true` is refused), `GET /v1/auth/whoami` (which reports `device_state` and `grants: []`), the sign-in routes, and attesting the device (`/v1/attest/*`);
+- functions deployed with `open_to_pending_devices: true`, over `/v1/functions/{name}/invoke`, `/v1/invoke/…` and `/v1/functions/{name}/ws` ([Functions](/docs/developer/functions#open-to-pending-devices)).
+
+Everything else, among it the account's devices and sessions, pub/sub, storage, cache, push, WebRTC and every other function, answers `403 DEVICE_PENDING_APPROVAL` with `device_id`.
+
+An open function decides. `get_caller_device_state()` tells it the caller is `pending`; `get_caller_jwt_subject()` and `get_caller_device_id()` say who and which device. When the application's check passes, the function calls `approve_device(subject, device_id)`: the device becomes active, and the device's next `POST /v1/auth/refresh` returns a full session with `device_state: "active"`. The restricted access tokens it already holds stay restricted until they expire, so refresh right after the approval. When the check fails, `deny_device(subject, device_id)` revokes the device: its session, sockets and tokens stop on every gateway within ten seconds, and its key can never sign in again. Either call acts only in the function's own namespace, only on a pending device (approving an active one succeeds and changes nothing; denying one is refused), only while the policy is `function`, and is recorded in the audit log as `function:<name>`. Leaving the policy ends every restricted session at its next refresh (`DEVICE_PENDING`).
+
+Who may approve is the application's code, not the gateway's: an open function that approves its own caller without a check lets any wallet signature add a device. Decide in the function what proves the request, for example a signed message from one of the account's active devices, which the function can verify, or the application's recovery secret.
+
 ## Rolling it out
 
-A gateway that predates devices knows nothing of the policy, of device-bound sign-in or of `device:` revocations. Set a session policy, and ship clients that bind devices, only once every gateway in the cluster runs this version.
+A gateway that predates devices knows nothing of the policy, of device-bound sign-in or of `device:` revocations. Set a session policy, and ship clients that bind devices, only once every gateway in the cluster runs this version. The same holds for `function`: a gateway that predates it refuses a restricted session's token outright, and a namespace gateway that predates it sees a restricted session proxied to it as no caller at all.
 
 ## Error codes
 
@@ -133,7 +151,8 @@ A gateway that predates devices knows nothing of the policy, of device-bound sig
 | `DEVICE_PROOF_INVALID` | The proof is malformed, reused, or not the device's (401) |
 | `DEVICE_PROOF_CLOCK_SKEW` | The proof's time is more than 60 seconds from the gateway's clock; `server_time` is the gateway's clock (401) |
 | `DEVICE_REVOKED` | The device was revoked; its key can never hold a session again (403) |
-| `DEVICE_PENDING` | The device waits for another of the account's devices to approve it (403, or 202 on sign-in) |
+| `DEVICE_PENDING` | The device waits for another of the account's devices to approve it (403, or 202 on sign-in); under `function`, a pending device's refresh after the namespace left the policy |
+| `DEVICE_PENDING_APPROVAL` | The session is a pending device's restricted session and this route or function is not open to it; `device_id` is the device (403) |
 | `DEVICE_NOT_FOUND` | The account has no such device (404) |
 | `DEVICE_KEY_TAKEN` | The key is enrolled for another account (403) |
 | `DEVICE_USER_CODE_MALFORMED` | The user code is not the shape the gateway issues (400) |

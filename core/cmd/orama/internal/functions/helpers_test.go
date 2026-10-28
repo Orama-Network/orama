@@ -128,6 +128,18 @@ func TestLoadConfig_InvocableBy(t *testing.T) {
 	}
 }
 
+// feat-973: open_to_pending_devices in function.yaml opens the function to a
+// pending device's restricted session; it is closed unless it says so.
+func TestLoadConfig_OpenToPendingDevices(t *testing.T) {
+	cfg, err := LoadConfig(writeFunctionYAML(t, "name: device-join\nopen_to_pending_devices: true\n"))
+	if err != nil || !cfg.OpenToPendingDevices {
+		t.Fatalf("open_to_pending_devices: true gave %v, %v", cfg.OpenToPendingDevices, err)
+	}
+	if cfg, err := LoadConfig(writeFunctionYAML(t, "name: plain-fn\n")); err != nil || cfg.OpenToPendingDevices {
+		t.Errorf("no open_to_pending_devices gave %v, %v", cfg.OpenToPendingDevices, err)
+	}
+}
+
 // `orama function list` shows what a function admits as its callers.
 func TestInvocableByColumn(t *testing.T) {
 	for _, c := range []struct {

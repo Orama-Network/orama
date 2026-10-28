@@ -353,6 +353,18 @@ func (m *MockHostServices) GetCallerAttestationVerdict(ctx context.Context) stri
 	return ""
 }
 
+func (m *MockHostServices) GetCallerDeviceState(ctx context.Context) string {
+	return ""
+}
+
+func (m *MockHostServices) ApproveDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
+func (m *MockHostServices) DenyDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
 func (m *MockHostServices) GetCallerCapability(ctx context.Context) string {
 	return ""
 }

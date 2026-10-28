@@ -78,6 +78,11 @@ const (
 	CodeAttestationInvalid = "ATTESTATION_INVALID"
 	// CodeAppUpdateRequired — the build is older than the namespace admits.
 	CodeAppUpdateRequired = "APP_UPDATE_REQUIRED"
+
+	// CodeDevicePendingApproval — the caller's session is a pending device's
+	// restricted one (the function device policy, feat-973), on a route that
+	// does not admit it.
+	CodeDevicePendingApproval = "DEVICE_PENDING_APPROVAL"
 )
 
 // authHints are what to do about each refusal. They are here rather than at the
@@ -100,6 +105,7 @@ var authHints = map[string]string{
 	CodeAttestationRequired:   "attest this device (POST /v1/attest/challenge, then /v1/attest/ios or /v1/attest/android) and use the token it returns",
 	CodeAttestationInvalid:    "this build, device or OS is not one the namespace admits; only the namespace's own app on a genuine device is",
 	CodeAppUpdateRequired:     "update the app to a build the namespace still admits",
+	CodeDevicePendingApproval: "finish the application's own admission of this device (its functions open to pending devices), then refresh the session",
 }
 
 // writeAuthError writes a refusal a client can act on without reading English.

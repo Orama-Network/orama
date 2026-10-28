@@ -120,6 +120,9 @@ func (h *HostFunctions) FunctionInvoke(ctx context.Context, name string, payload
 		CallerClaims:     cur.CallerClaims,
 		CallerJWTSubject: cur.CallerJWTSubject,
 		CallerDeviceID:   cur.CallerDeviceID,
+		// A pending device stays pending down the chain: a function open to
+		// it cannot hand it one that is not.
+		CallerDeviceState: cur.CallerDeviceState,
 		// The same caller down the chain, attested or not.
 		CallerAttestation: cur.CallerAttestation,
 		// Propagate trigger depth so a wildcard-triggered handler that
@@ -229,6 +232,7 @@ func (h *HostFunctions) FunctionInvokeAsync(ctx context.Context, name string, pa
 			CallerClaims:      snapshot.CallerClaims,
 			CallerJWTSubject:  snapshot.CallerJWTSubject,
 			CallerDeviceID:    snapshot.CallerDeviceID,
+			CallerDeviceState: snapshot.CallerDeviceState,
 			CallerAttestation: snapshot.CallerAttestation,
 			TriggerDepth:      snapshot.TriggerDepth,
 		}

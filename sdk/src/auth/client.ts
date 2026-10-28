@@ -23,6 +23,19 @@ import {
 
 /** Where the id of the device the stored session is bound to is kept. */
 const DEVICE_ID_KEY = "deviceId";
+/** Where that device's state, as the gateway last answered it, is kept. */
+const DEVICE_STATE_KEY = "deviceState";
+
+/**
+ * The state of the device a session is bound to. `pending` is the restricted
+ * session of a device the namespace has yet to approve (its function device
+ * policy): it reaches its own session and the functions the namespace opened
+ * to pending devices, and every other call is refused with
+ * `AuthCode.DevicePendingApproval`. Once one of the namespace's functions
+ * approves the device, the next `refresh()` is a full session and the state
+ * reads `active`.
+ */
+export type DeviceState = "pending" | "active";
 
 /** The tokens a sign-in, a refresh or a collected device link answer with. */
 interface SessionResponse {
@@ -32,6 +45,7 @@ interface SessionResponse {
   namespace: string;
   api_key?: string;
   device_id?: string;
+  device_state?: DeviceState;
   expires_in?: number;
   token_type?: string;
 }
@@ -244,6 +258,7 @@ export class AuthClient {
       subject?: string;
       namespace?: string;
       token_type?: string;
+      device_state?: DeviceState;
     }
     const body = { refresh_token: refreshToken, namespace };
     // A session bound to a device is refreshed by the device: the gateway
@@ -266,6 +281,8 @@ export class AuthClient {
     if (response.refresh_token && response.refresh_token !== refreshToken) {
       await this.storage.set("refreshToken", response.refresh_token);
     }
+    // A pending device's first refresh after its approval is a full session.
+    await this.storage.set(DEVICE_STATE_KEY, response.device_state ?? "");
 
     return response.access_token;
   }
@@ -468,6 +485,18 @@ export class AuthClient {
     // device it is bound to is kept beside it — and a session bound to none
     // clears what an earlier one left.
     await this.storage.set(DEVICE_ID_KEY, response.device_id ?? "");
+    await this.storage.set(DEVICE_STATE_KEY, response.device_state ?? "");
+  }
+
+  /**
+   * The state of the device the stored session is bound to, as the gateway
+   * last answered it: `pending` until one of the namespace's functions
+   * approves the device and the session is refreshed, then `active`.
+   * `undefined` for a session bound to no device, or none.
+   */
+  async deviceState(): Promise<DeviceState | undefined> {
+    const state = await this.storage.get(DEVICE_STATE_KEY);
+    return state === "pending" || state === "active" ? state : undefined;
   }
 
   /**

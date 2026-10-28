@@ -30,6 +30,14 @@ const (
 	// account's first starts pending: a wallet signature alone enrols it but
 	// gives it no session until one of the account's active devices approves.
 	DevicePolicyApproval DevicePolicy = "approval"
+	// DevicePolicyFunction is DevicePolicyRequired, and a device beyond an
+	// account's first starts pending with a restricted session: it reaches
+	// only the functions deployed open to pending devices, its own session and
+	// its own attestation, until one of the namespace's functions approves it
+	// (approve_device). The namespace runs its own admission — a join request
+	// answered from another device, a recovery check — and the gateway holds
+	// the device to it.
+	DevicePolicyFunction DevicePolicy = "function"
 )
 
 // devicePolicyStaleness is how long a refresh may be judged by a policy a
@@ -47,10 +55,10 @@ var ErrDeviceRequired = errors.New("this namespace requires sessions bound to a 
 // ParseDevicePolicy reads a policy name.
 func ParseDevicePolicy(raw string) (DevicePolicy, error) {
 	switch p := DevicePolicy(strings.ToLower(strings.TrimSpace(raw))); p {
-	case DevicePolicyOptional, DevicePolicyRequired, DevicePolicyApproval:
+	case DevicePolicyOptional, DevicePolicyRequired, DevicePolicyApproval, DevicePolicyFunction:
 		return p, nil
 	default:
-		return "", fmt.Errorf("device policy is one of optional, required, approval (got %q)", raw)
+		return "", fmt.Errorf("device policy is one of optional, required, approval, function (got %q)", raw)
 	}
 }
 

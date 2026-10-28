@@ -24,7 +24,9 @@ type DeviceState string
 
 const (
 	// DeviceStatePending is a device a wallet signature enrolled in a namespace
-	// that requires an existing device's approval. It holds no session.
+	// that requires its approval. Under the approval policy it holds no
+	// session; under the function policy it holds a pending device's
+	// restricted one (AudiencePendingDevice).
 	DeviceStatePending DeviceState = "pending"
 	// DeviceStateActive may hold sessions.
 	DeviceStateActive DeviceState = "active"
@@ -40,8 +42,15 @@ var (
 	ErrDeviceNotFound = errors.New("no such device on this account")
 	// ErrDeviceRevoked is a device that was revoked. Its key is done.
 	ErrDeviceRevoked = errors.New("this device was revoked; it cannot sign in or hold a session again")
-	// ErrDevicePending is a device still waiting for another device's approval.
-	ErrDevicePending = errors.New("this device is waiting to be approved from another of the account's devices")
+	// ErrDevicePending is a device still waiting to be approved: from another
+	// of the account's devices under the approval policy, by the namespace's
+	// own functions under the function policy.
+	ErrDevicePending = errors.New("this device is waiting to be approved")
+	// ErrDevicePendingApproval is a pending device's restricted session asking
+	// for something it does not reach: anything but its own session, its own
+	// attestation and the functions open to pending devices.
+	ErrDevicePendingApproval = errors.New("this session's device is pending approval: until the namespace approves it, " +
+		"it reaches only its own session and the functions the namespace opened to pending devices")
 	// ErrDeviceBelongsToAnother is a device key already enrolled for a
 	// different account or namespace. A key is one installation's, and an
 	// installation is one account's.

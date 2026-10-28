@@ -21,6 +21,9 @@ import (
 // Response 200: { "access_token", "token_type", "expires_in", "refresh_token", "subject", "namespace", "nonce", "signature_verified" }
 // plus "api_key", except in the lobby namespace, on a device-bound sign-in, and for
 // a member whose role holds no grant (a reader), none of which gets one.
+// A device-bound sign-in also answers "device_id" and "device_state": "active",
+// or "pending" for a device the namespace's functions have yet to approve under
+// the function policy, whose session is restricted until then.
 // Response 202: { "status": "pending_approval", "code": "DEVICE_PENDING", "hint", "device_id", "device_code", "user_code", "expires_in", "interval", "subject", "namespace" }
 func (h *Handlers) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 	if h.authService == nil {
@@ -84,7 +87,11 @@ func (h *Handlers) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, refresh, expUnix, err := h.authService.IssueDeviceTokens(ctx, wallet, namespace, binding.deviceID)
+	issue := h.authService.IssueDeviceTokens
+	if binding.pendingSession {
+		issue = h.authService.IssuePendingDeviceTokens
+	}
+	token, refresh, expUnix, err := issue(ctx, wallet, namespace, binding.deviceID)
 	if err != nil {
 		// The early gate let the wallet in; the namespace closed in between.
 		if isSignInRefusal(err) {
@@ -101,12 +108,16 @@ func (h *Handlers) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.authService.Audit().RecordFromRequest(ctx, r, authsvc.AuditEvent{
+	verified := authsvc.AuditEvent{
 		Namespace: namespace,
 		Actor:     wallet,
 		Action:    authsvc.AuditVerifySucceeded,
 		Result:    authsvc.AuditSuccess,
-	})
+	}
+	if binding.pendingSession {
+		verified.Metadata = map[string]string{"device": binding.deviceID, "device_state": authsvc.CallerDevicePending}
+	}
+	h.authService.Audit().RecordFromRequest(ctx, r, verified)
 
 	body := map[string]any{
 		"access_token":       token,
@@ -123,8 +134,17 @@ func (h *Handlers) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if binding.deviceID != "" {
 		body["device_id"] = binding.deviceID
+		body["device_state"] = deviceStateOf(binding.pendingSession)
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// deviceStateOf is how a session answer names its device's state.
+func deviceStateOf(pending bool) string {
+	if pending {
+		return authsvc.CallerDevicePending
+	}
+	return authsvc.CallerDeviceActive
 }
 
 // signInKey is the API key a sign-in hands back beside its session, or "" when

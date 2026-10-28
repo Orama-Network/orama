@@ -5020,9 +5020,12 @@ left out keeps its value.
                       wallet reaches. Closing it again ends those sessions at
                       their next refresh. A namespace nobody owns stays closed.
 
-  --device-policy     optional | required | approval: what an end user's
-                      sign-in must bind. Requiring devices revokes the sign-in
-                      keys end users already hold.
+  --device-policy     optional | required | approval | function: what an end
+                      user's sign-in must bind. Requiring devices revokes the
+                      sign-in keys end users already hold. function: an
+                      account's first device is active, and each later one
+                      gets a restricted session until one of the namespace's
+                      functions approves it (approve_device).
 
   --end-user-topics   the pub/sub topics an end user may subscribe to, list and
                       see presence on, comma-separated patterns ('*' matches any
@@ -5055,7 +5058,7 @@ Changing any of them needs write access to the namespace.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--device-policy` | — | What an end user's sign-in must bind: optional \| required \| approval |
+| `--device-policy` | — | What an end user's sign-in must bind: optional \| required \| approval \| function |
 | `--end-user-topics` | — | Pub/sub topic patterns end users may read, comma-separated; '' clears the list |
 | `--invokes-per-ip-minute` | `0` | When per-IP limits are on: authenticated invokes one network may make per minute per gateway |
 | `--namespace` | — | Namespace name |

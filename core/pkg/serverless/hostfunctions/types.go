@@ -151,6 +151,11 @@ type HostFunctions struct {
 	// at gateway start via SetWebRTCController; nil means webrtc_admit,
 	// webrtc_kick and webrtc_mute fail and say why.
 	webrtc serverless.WebRTCController
+
+	// deviceAdmitter approves and denies the namespace's pending devices
+	// (device_admission.go). Set once at gateway start via SetDeviceAdmitter;
+	// nil means approve_device and deny_device fail and say why.
+	deviceAdmitter DeviceAdmitter
 }
 
 // Ensure HostFunctions implements HostServices interface.
