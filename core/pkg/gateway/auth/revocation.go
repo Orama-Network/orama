@@ -272,7 +272,7 @@ const MaxDeviceIssuedLifetime = 7 * 24 * time.Hour
 // thumbprint, and an entry naming the id alone would refuse the same key
 // enrolled in another namespace for up to seven days.
 //
-// It is one row carrying both keys (feat-978: remove the legacy half once no
+// It is one row carrying both keys (change-978: remove the legacy half once no
 // gateway before 0.3.13 is left). Its subject is the legacy "device:<id>",
 // the only column gateways before 0.3.13 match a device on, so they refuse
 // the device at once during a rolling upgrade rather than when its tokens
@@ -311,7 +311,7 @@ func (r *RevocationList) DeniesDevice(namespace, deviceID string) bool {
 }
 
 // deniesDeviceLocked is DeniesDevice under r.mu. It also honours an entry
-// naming the device id alone (legacyDeviceRevocationKey, feat-978): gateways
+// naming the device id alone (legacyDeviceRevocationKey, change-978): gateways
 // before 0.3.13 wrote those, and one written by such a gateway, during a
 // rolling upgrade or before it, lives MaxDeviceIssuedLifetime.
 func (r *RevocationList) deniesDeviceLocked(namespace, deviceID string) bool {
@@ -337,7 +337,7 @@ func deviceRevocationKey(namespace, deviceID string) string {
 // device under, "device:<id>". Written only as the subject of the dual row
 // RevokeDevice writes, for those gateways; an entry under it with no scoped
 // jti, which one of them wrote, refuses the device in every namespace
-// (feat-978: drop both once no gateway before 0.3.13 is left and the last
+// (change-978: drop both once no gateway before 0.3.13 is left and the last
 // such entry has expired).
 func legacyDeviceRevocationKey(deviceID string) string {
 	return bindingRevocationKey(deviceRevocationPrefix, deviceID)
@@ -464,7 +464,7 @@ func (r *RevocationList) apply(rev revocation) {
 // applyRevocation puts one revocation into byJTI and bySubject. A row whose
 // jti is a scoped device key is RevokeDevice's dual row: it is that scoped
 // entry and nothing else here, its legacy subject being for gateways before
-// 0.3.13 (feat-978).
+// 0.3.13 (change-978).
 func applyRevocation(byJTI, bySubject map[string]int64, rev revocation) {
 	subject := strings.ToLower(strings.TrimSpace(rev.subject))
 	if strings.HasPrefix(rev.jti, deviceRevocationPrefix) {

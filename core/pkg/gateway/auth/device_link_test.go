@@ -246,7 +246,7 @@ func TestRevocationList_honoursAnUnscopedDeviceEntry(t *testing.T) {
 // newer gateway kept working on the older ones until its tokens expired.
 // RevokeDevice writes one row carrying both keys: the legacy subject, for
 // them, and the scoped key as its jti, which a newer gateway reloading the
-// list reads as the device's entry in its own namespace only (feat-978).
+// list reads as the device's entry in its own namespace only (change-978).
 func TestRevokeDevice_writesTheLegacyEntryForOlderGateways(t *testing.T) {
 	s, db := serviceWithRevocations(t)
 	ctx := context.Background()
