@@ -61,3 +61,49 @@ func TestDevicePolicyFunctionMigration_keepsRowsAndAdmitsFunction(t *testing.T) 
 		t.Error("a function deployed before 099 is open to pending devices; want closed")
 	}
 }
+
+// Migration 099 rebuilds a table (CREATE, copy, DROP, RENAME), which is safe
+// only because the runner applies a migration file as one transaction: a
+// failure anywhere in it, here its last statement, leaves the original table
+// with its rows and its old CHECK, and no half-built copy, so the next run
+// applies the whole file.
+func TestDevicePolicyFunctionMigration_aFailurePartwayLeavesTheTableWhole(t *testing.T) {
+	db := openRoundtripDB(t)
+	if err := rqlite.ApplyEmbeddedMigrations(t.Context(), db, migrationsBefore(t, devicePolicyFunctionMigration), zap.NewNop()); err != nil {
+		t.Fatalf("apply migrations before 099: %v", err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO namespaces (id, name) VALUES (7, 'ns-a')`,
+		`INSERT INTO namespace_session_policy (namespace_id, device_policy, updated_by) VALUES (7, 'approval', 'owner')`,
+		// The statement after the rebuild, ADD COLUMN on functions, fails.
+		`ALTER TABLE functions RENAME TO functions_aside`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if err := rqlite.ApplyEmbeddedMigrations(t.Context(), db, migrations.FS, zap.NewNop()); err == nil {
+		t.Fatal("099 applied with no functions table")
+	}
+	var policy string
+	if err := db.QueryRow(`SELECT device_policy FROM namespace_session_policy WHERE namespace_id = 7`).Scan(&policy); err != nil || policy != "approval" {
+		t.Fatalf("after the failed run the policy row is %q, %v", policy, err)
+	}
+	var copies int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'namespace_session_policy_new'`).Scan(&copies); err != nil || copies != 0 {
+		t.Errorf("the failed run left %d half-built copies (%v)", copies, err)
+	}
+	if _, err := db.Exec(`UPDATE namespace_session_policy SET device_policy = 'function' WHERE namespace_id = 7`); err == nil {
+		t.Error("the failed run changed the CHECK")
+	}
+
+	if _, err := db.Exec(`ALTER TABLE functions_aside RENAME TO functions`); err != nil {
+		t.Fatal(err)
+	}
+	if err := rqlite.ApplyEmbeddedMigrations(t.Context(), db, migrations.FS, zap.NewNop()); err != nil {
+		t.Fatalf("the next run: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE namespace_session_policy SET device_policy = 'function' WHERE namespace_id = 7`); err != nil {
+		t.Errorf("after the next run the function policy is refused: %v", err)
+	}
+}

@@ -18,8 +18,11 @@
 --
 -- namespace_session_policy.device_policy is CHECK-constrained, and SQLite
 -- cannot change a CHECK in place, so the table is rebuilt with every column and
--- row carried across. The copy is INSERT OR IGNORE into a table with the same
--- columns, so a re-run copies the table onto itself and changes nothing.
+-- row carried across. The rebuild (CREATE, copy, DROP, RENAME) is crash-safe
+-- because the runner applies this file, tracker row included, as one
+-- transaction (core/pkg/rqlite/migration_tx.go:applyStatementsAtomically; one
+-- /db/execute?transaction request on rqlite): it commits whole or not at all,
+-- so no run can stop between the DROP and the RENAME.
 --
 -- functions.open_to_pending_devices is the function.yaml field of the same
 -- name. It defaults to false: a function deployed before this migration, or

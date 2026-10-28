@@ -432,6 +432,7 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 | `DEVICE_NOT_FOUND` | 404 | the account has no such device |
 | `DEVICE_KEY_TAKEN` | 403 | the key is enrolled for another account |
 | `DEVICE_USER_CODE_MALFORMED` | 400 | a device-flow user code is not the shape the gateway issues |
+| `DEVICE_LINK_FUNCTION_POLICY` | 403 | a device link (start, approve or collect) in a namespace under the `function` policy, whose functions admit its devices |
 | `DEVICE_LOGIN_MISMATCH` | 400 | the pending login is for another namespace or account, or is the other kind (a device link offered to a wallet, a plain login to a device) |
 | `POLICY_SWEEP_INCOMPLETE` | 503 | the session policy is set, but revoking the end users' existing sign-in keys stopped partway; repeat the `PUT` |
 

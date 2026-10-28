@@ -3,6 +3,7 @@
 package authdeviceadmission
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -28,6 +29,23 @@ func TestFunctionPolicy_aFunctionAdmitsTheAccountsLaterDevices(t *testing.T) {
 		}
 		if got := whoCalled(t, fx, first.AccessToken); got.DeviceState != stateActive || got.DeviceID != phone.ID() {
 			t.Fatalf("a function was told %+v about the first device", got)
+		}
+	})
+
+	t.Run("a device link is refused: the functions admit devices", func(t *testing.T) {
+		linked := gw.NewDevice(t, wallet.AlgEd25519)
+		body, err := json.Marshal(map[string]any{"namespace": fx.n.Name, "device_key": linked.PublicJWK()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := fx.c.MustSend(t, gw.Req{Method: http.MethodPost, Path: pathDeviceStart,
+			Header: http.Header{"Content-Type": {"application/json"}}, Body: body})
+		var refusal struct {
+			Code string `json:"code"`
+		}
+		_ = json.Unmarshal(resp.Body, &refusal)
+		if resp.Status != http.StatusForbidden || refusal.Code != codeLinkFunctionPolicy {
+			t.Errorf("a seedless device link under the function policy: %d %.400s, want 403 %s", resp.Status, resp.Body, codeLinkFunctionPolicy)
 		}
 	})
 

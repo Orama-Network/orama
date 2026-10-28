@@ -38,7 +38,8 @@ func (h *Handlers) startPendingLogin(ctx context.Context, req DeviceAuthorizatio
 //   - A device link needs the linked device's proof over this device code,
 //     and the device that approved it must still be active: revoking a stolen
 //     approver must reach the device it let in. The linked device becomes
-//     one of the account's active devices here.
+//     one of the account's active devices here, unless the namespace now
+//     admits its devices from its functions (DeviceLinkAllowed).
 func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, proof *authsvc.DeviceProof, deviceID, namespace *string) func(*authsvc.ClaimedDeviceAuthorization) error {
 	return func(claimed *authsvc.ClaimedDeviceAuthorization) error {
 		*namespace = claimed.Namespace
@@ -57,6 +58,9 @@ func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, pr
 				return authsvc.ErrDeviceRequired
 			}
 			return nil
+		}
+		if err := h.authService.DeviceLinkAllowed(ctx, claimed.Namespace); err != nil {
+			return err
 		}
 		key, err := authsvc.ParseDeviceKey([]byte(claimed.DeviceKey))
 		if err != nil {

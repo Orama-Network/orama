@@ -381,6 +381,17 @@ type SessionBinding struct {
 	Pending bool
 }
 
+// Binding is the session binding a verified token was minted with. A token
+// minted again from presented claims takes its binding from here and changes
+// only what it means to change, so the device, the session, the attestation
+// and a pending device's restricted audience are carried over by construction.
+func (c *JWTClaims) Binding() SessionBinding {
+	if c == nil {
+		return SessionBinding{}
+	}
+	return SessionBinding{DeviceID: c.Did, SessionID: c.Sid, Attestation: c.Att, Pending: c.PendingDevice()}
+}
+
 // GenerateJWT mints a signed access token. `custom` carries additive
 // app-defined claims (e.g. the namespace's account_id from the claims-provider
 // hook, bugboard #548) under the top-level "custom" object — read back via

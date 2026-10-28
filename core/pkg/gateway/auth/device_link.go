@@ -36,6 +36,27 @@ import (
 // requiring device approval rules out.
 var ErrDeviceLinkNeedsDevice = fmt.Errorf("%w: it links a device; approve it from one of the account's signed-in devices", ErrDeviceLoginMismatch)
 
+// ErrDeviceLinkFunctionPolicy is a device link in a namespace whose policy is
+// DevicePolicyFunction. There the namespace's own functions decide which of an
+// account's devices are admitted; a link approved by another device would
+// enrol the new one active, or activate one still pending, past that decision.
+var ErrDeviceLinkFunctionPolicy = errors.New("this namespace admits its users' devices from its own functions, not by a device link")
+
+// DeviceLinkAllowed refuses a device link in a namespace under the function
+// policy, read fresh, at every step of the link: starting it, approving it and
+// collecting its session, so a link started before the policy changed admits
+// nothing after.
+func (s *Service) DeviceLinkAllowed(ctx context.Context, namespace string) error {
+	policy, err := s.DevicePolicyOf(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	if policy == DevicePolicyFunction {
+		return ErrDeviceLinkFunctionPolicy
+	}
+	return nil
+}
+
 // StartDeviceLink records a keyed pending login. subject is the account when a
 // wallet signature already named it — the approval-required sign-in — and ""
 // for a device linking with no wallet, which takes its account from whoever
@@ -45,6 +66,9 @@ func (s *Service) StartDeviceLink(ctx context.Context, namespace, subject string
 		return nil, fmt.Errorf("%w: a device link needs the device's key", ErrDeviceKeyInvalid)
 	}
 	if strings.TrimSpace(namespace) != "" {
+		if err := s.DeviceLinkAllowed(ctx, namespace); err != nil {
+			return nil, err
+		}
 		existing, err := s.Device(ctx, namespace, key.ID())
 		switch {
 		case err == nil && existing.State == DeviceStateRevoked:
@@ -79,6 +103,9 @@ func (s *Service) ApproveDeviceLink(ctx context.Context, userCode, namespace str
 	}
 	if pending.Subject != "" && pending.Subject != approver.Subject {
 		return fmt.Errorf("%w: it is for another account", ErrDeviceLoginMismatch)
+	}
+	if err := s.DeviceLinkAllowed(ctx, namespace); err != nil {
+		return err
 	}
 	if s.db == nil {
 		return ErrRotationNotConfigured

@@ -145,8 +145,17 @@ func TestSessionOwner_anUnboundTokenIsRefusedOnceDevicesAreRequired(t *testing.T
 		if code, body := f.do(f.h.SessionsHandler, http.MethodGet, "/v1/auth/sessions", nil, unbound); code != http.StatusForbidden {
 			t.Errorf("%s: an unbound token listing sessions: %d %v", policy, code, body)
 		}
+		if code, body := f.do(f.h.LogoutHandler, http.MethodPost, "/v1/auth/logout", map[string]any{"all": true}, unbound); code != http.StatusForbidden || body["code"] != ErrCodeDeviceRequired {
+			t.Errorf("%s: an unbound token logging the account out everywhere: %d %v, want 403 %s", policy, code, body, ErrCodeDeviceRequired)
+		}
 	}
 	if d, err := f.svc.Device(context.Background(), flowNamespace, phone.id); err != nil || d.State != authsvc.DeviceStateActive {
 		t.Errorf("the device after the unbound token's attempts: %+v, %v", d, err)
+	}
+	if _, err := f.svc.SetDevicePolicy(context.Background(), flowNamespace, authsvc.DevicePolicyOptional, "0xowner"); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := f.do(f.h.LogoutHandler, http.MethodPost, "/v1/auth/logout", map[string]any{"all": true}, unbound); code != http.StatusOK {
+		t.Errorf("under optional an unbound token logs the account out everywhere: %d %v", code, body)
 	}
 }

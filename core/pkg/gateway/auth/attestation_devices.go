@@ -445,11 +445,14 @@ func (s *Service) logAttestationRefusal(deviceID string, err error) {
 // ReissueAttested mints an access token for the session claims belong to,
 // carrying the attestation the device just made, so the app does not have to
 // refresh before the namespace admits it. claims are the verified token the
-// attestation was posted with; everything but `att` is carried over.
+// attestation was posted with; everything but `att` is carried over, a
+// pending device's restricted audience included: attesting proves the app, not
+// that the namespace admitted the device.
 func (s *Service) ReissueAttested(claims *JWTClaims, att *AttestationClaim) (string, int64, error) {
 	if claims == nil || claims.Did == "" {
 		return "", 0, ErrAttestationNeedsDevice
 	}
-	return s.GenerateBoundJWT(claims.Namespace, claims.Sub, AccessTokenLifetime, claims.Custom,
-		SessionBinding{DeviceID: claims.Did, SessionID: claims.Sid, Attestation: att})
+	binding := claims.Binding()
+	binding.Attestation = att
+	return s.GenerateBoundJWT(claims.Namespace, claims.Sub, AccessTokenLifetime, claims.Custom, binding)
 }

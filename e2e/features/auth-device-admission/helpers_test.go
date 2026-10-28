@@ -41,16 +41,18 @@ const (
 	statePending = "pending"
 	stateActive  = "active"
 
-	codePending = "DEVICE_PENDING_APPROVAL"
+	codePending            = "DEVICE_PENDING_APPROVAL"
+	codeLinkFunctionPolicy = "DEVICE_LINK_FUNCTION_POLICY"
 
 	roleRuntime = "runtime"
 	roleAdmin   = "admin"
 
-	pathDevices   = "/v1/auth/devices"
-	pathSessions  = "/v1/auth/sessions"
-	pathPubsubWS  = "/v1/pubsub/ws"
-	pathPublish   = "/v1/pubsub/publish"
-	pathNSDevices = "/v1/namespace/devices"
+	pathDeviceStart = "/v1/auth/device"
+	pathDevices     = "/v1/auth/devices"
+	pathSessions    = "/v1/auth/sessions"
+	pathPubsubWS    = "/v1/pubsub/ws"
+	pathPublish     = "/v1/pubsub/publish"
+	pathNSDevices   = "/v1/namespace/devices"
 )
 
 // fixture is a namespace under the function device policy with both fixture

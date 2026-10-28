@@ -22,6 +22,7 @@ covers:
   cli:
     - orama namespace session-policy
   routes:
+    - /v1/auth/device
     - /v1/auth/verify
     - /v1/auth/refresh
     - /v1/auth/devices
@@ -36,4 +37,5 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: under the function policy the account's first device ever is active and every later one, recovery included, signs in to a pending session"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#a-pending-devices-session: a pending session is refused DEVICE_PENDING_APPROVAL on every route but its own session's and the function routes, and on every function not open_to_pending_devices"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: approve_device makes the next refresh a full session; deny_device ends the session on every gateway; neither acts on an active device"
+    - "website/src/docs/developer/devices.mdx#devices-admitted-by-a-function: under the function policy a device link is refused DEVICE_LINK_FUNCTION_POLICY"
     - "website/src/docs/developer/functions.mdx#open-to-pending-devices: get_caller_device_state tells a function pending or active"

@@ -288,8 +288,14 @@ func (h *Handlers) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 		// From a session bound to a device, ending every session of the
 		// account is the device's act, as revoking a device or ending a
 		// session is: the access token alone is a bearer token anybody who
-		// copied it holds. A session bound to no device is the wallet's own.
-		if claims.Did != "" && !h.verifyCallerDeviceProof(w, r, h.servedNamespace(r), claims,
+		// copied it holds. A session bound to no device is the wallet's own
+		// under the optional policy only; under any other it was minted before
+		// the policy was set, and is held to the rule sessionOwner applies.
+		if claims.Did == "" {
+			if !h.requireNoDevicePolicy(w, r, h.servedNamespace(r), claims.Sub) {
+				return
+			}
+		} else if !h.verifyCallerDeviceProof(w, r, h.servedNamespace(r), claims,
 			authsvc.DeviceProofLogoutAll, claims.Did, req.DeviceProof) {
 			return
 		}

@@ -213,6 +213,11 @@ export const AuthCode = {
    * the other kind (a device link offered to a wallet, a plain login to a device).
    */
   DeviceLoginMismatch: "DEVICE_LOGIN_MISMATCH",
+  /**
+   * A device link (starting, approving or collecting one) in a namespace
+   * whose own functions admit its users' devices (the function policy).
+   */
+  DeviceLinkFunctionPolicy: "DEVICE_LINK_FUNCTION_POLICY",
   /** The session policy is set, but revoking existing sign-in keys stopped partway. Repeat the request. */
   PolicySweepIncomplete: "POLICY_SWEEP_INCOMPLETE",
   /**

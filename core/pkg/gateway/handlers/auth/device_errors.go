@@ -57,6 +57,9 @@ const (
 	// ErrCodeDeviceLoginMismatch: the pending login is for another namespace
 	// or account, or is the other kind of login (device link vs wallet).
 	ErrCodeDeviceLoginMismatch = "DEVICE_LOGIN_MISMATCH"
+	// ErrCodeDeviceLinkFunctionPolicy: a device link in a namespace whose
+	// functions admit its users' devices (the function policy).
+	ErrCodeDeviceLinkFunctionPolicy = "DEVICE_LINK_FUNCTION_POLICY"
 )
 
 type deviceRefusal struct {
@@ -92,6 +95,8 @@ var deviceRefusals = []struct {
 		"list this account's devices with GET /v1/auth/devices"}},
 	{authsvc.ErrSignInClosed, deviceRefusal{http.StatusForbidden, ErrCodeSignInClosed,
 		"this wallet holds no grant here (never invited, or its grant was revoked, expired or disabled) and the namespace is not open to other wallets; sign in again once it is, or ask its owner for an invitation"}},
+	{authsvc.ErrDeviceLinkFunctionPolicy, deviceRefusal{http.StatusForbidden, ErrCodeDeviceLinkFunctionPolicy,
+		"sign in with the wallet and this device's key; the device is pending until the application's own functions admit it"}},
 	{authsvc.ErrDeviceBelongsToAnother, deviceRefusal{http.StatusForbidden, ErrCodeDeviceKeyTaken,
 		"a device key belongs to one account; generate a new key for this one"}},
 }
