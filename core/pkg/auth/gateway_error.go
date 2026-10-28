@@ -112,11 +112,31 @@ func gatewayErrorAdvice(e *GatewayError) string {
 		}
 		return "this credential belongs to a different namespace than the request; 'orama auth whoami' shows which"
 	case CodeOwnershipRequired:
-		return "only the namespace's owner may do this; 'orama members list' shows who that is"
+		return ownershipAdvice(e.Message)
 	case CodeOperatorRequired:
 		return "this is an operator command and this wallet is not on the operator list"
 	}
 	return ""
+}
+
+// ownershipAdvice is what to do about OWNERSHIP_REQUIRED.
+//
+// The code answers two different refusals, and the gateway's sentence is what
+// tells them apart: a credential that holds no grant in the namespace at all,
+// and an act only the owner may do (transfer, backup and restore, the raw
+// database), which an admin is refused too. So the sentence is kept.
+//
+// It used to be replaced by "only the namespace's owner may do this; 'orama
+// members list' shows who that is", which was wrong for the first refusal and
+// pointed at a command that needs the same authority the caller had just been
+// refused (change-975). `orama auth whoami` is the one thing every credential
+// can run, and it says which wallet or key this is and what role it holds.
+func ownershipAdvice(message string) string {
+	const whoami = "'orama auth whoami' shows which wallet or key this credential is and its role in the namespace"
+	if message == "" {
+		return "this credential may not do this in the namespace; " + whoami
+	}
+	return message + "; " + whoami
 }
 
 // scopeFromMessage pulls the grant out of a message shaped like

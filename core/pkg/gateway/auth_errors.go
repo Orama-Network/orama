@@ -47,8 +47,10 @@ const (
 	CodeAuthUserJWTRequiredWire = "USER_JWT_REQUIRED"
 	// CodeNamespaceMismatch — the credential belongs to another namespace.
 	CodeNamespaceMismatch = "NAMESPACE_MISMATCH"
-	// CodeOwnershipRequired — the credential is valid, in the right namespace,
-	// and is not an owner of it.
+	// CodeOwnershipRequired — the credential is valid and in the right
+	// namespace, and either holds no grant in it or is asking for an act only
+	// the owner may do (transfer, backup and restore, the raw database). The
+	// message says which.
 	CodeOwnershipRequired = "OWNERSHIP_REQUIRED"
 	// CodeOriginNotAllowed — a WebSocket upgrade from a page on another site.
 	CodeOriginNotAllowed = "ORIGIN_NOT_ALLOWED"
@@ -89,7 +91,7 @@ var authHints = map[string]string{
 	CodeAuthUserJWTRequired:   "exchange the key for a token, or sign in as a user",
 	CodeScopeMissing:          "mint a key with the grant named in required_scope",
 	CodeNamespaceMismatch:     "use a credential belonging to this namespace",
-	CodeOwnershipRequired:     "use the namespace owner's credential, or an admin key for this namespace",
+	CodeOwnershipRequired:     "use a credential that belongs to this namespace (a member's wallet session or a key minted in it); an act only the owner may do needs the owner's wallet",
 	CodeOriginNotAllowed:      "open the socket from a page served by this host, or from a client that sends no Origin",
 	CodeOperatorRequired:      "sign in with a wallet on this cluster's operator list; no namespace role or API key is an operator's credential",
 	CodeNamespaceQuota:        "the wallet has to delete a namespace, or hand one on, before it can own another",

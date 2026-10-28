@@ -1337,18 +1337,22 @@ func (g *Gateway) authorizationMiddleware(next http.Handler) http.Handler {
 				ownerID = subj
 			}
 		}
+		// A key is identified by its stored form, the value api_keys.key and
+		// its service-account principal hold. An exchanged token's subject is
+		// already that form (the exchange mints it so); a bare key is the raw
+		// key and is hashed here, once.
 		if ownerType == "" && ownerID == "" {
 			if v := ctx.Value(ctxKeyAPIKey); v != nil {
 				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 					ownerType = "api_key"
-					ownerID = strings.TrimSpace(s)
+					ownerID = g.authService.HashAPIKey(strings.TrimSpace(s))
 				}
 			}
 		} else if ownerType == "wallet" {
 			// If we have a JWT wallet, also capture the API key as fallback
 			if v := ctx.Value(ctxKeyAPIKey); v != nil {
 				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-					apiKeyFallback = strings.TrimSpace(s)
+					apiKeyFallback = g.authService.HashAPIKey(strings.TrimSpace(s))
 				}
 			}
 		}
@@ -1380,15 +1384,9 @@ func (g *Gateway) authorizationMiddleware(next http.Handler) http.Handler {
 		nsID := nres.Rows[0][0]
 
 		// grantFor reports the live grant (ot, oid) holds in this namespace, if
-		// any. API keys are stored HMAC-hashed (see service.HashAPIKey) while
-		// the presented value here is the RAW key, so a key is looked up under
-		// its hashed form only.
+		// any. For a key, oid is its stored form, never the raw key.
 		grantFor := func(ot, oid string) *auth.Grant {
-			hashed := ""
-			if ot == "api_key" {
-				hashed = g.authService.HashAPIKey(oid)
-			}
-			for _, c := range principalIdentifierCandidates(ot, oid, hashed) {
+			for _, c := range principalIdentifierCandidates(ot, oid) {
 				grant, gerr := g.authService.GrantIn(internalCtx, db, nsID, grantPrincipalType(ot), c)
 				if gerr == nil {
 					return grant
@@ -1469,11 +1467,9 @@ func (g *Gateway) lookupRequestGrant(r *http.Request) (*auth.Grant, error) {
 	}
 	nsID := nres.Rows[0][0]
 
-	hashed := ""
-	if ownerType == "api_key" {
-		hashed = g.authService.HashAPIKey(ownerID)
-	}
-	for _, c := range principalIdentifierCandidates(ownerType, ownerID, hashed) {
+	// The subject of an exchanged key's token is the key's stored form, which
+	// is what its principal is recorded under.
+	for _, c := range principalIdentifierCandidates(ownerType, ownerID) {
 		grant, gerr := g.authService.GrantIn(internalCtx, db, nsID, grantPrincipalType(ownerType), c)
 		switch {
 		case gerr == nil:
@@ -1529,10 +1525,10 @@ func grantPrincipalType(ownerType string) auth.PrincipalType {
 }
 
 // loggableOwnerID is how an owner appears in a log line. For an API key the
-// owner id is the raw key — a live credential — so its fingerprint is logged
-// instead (auth.KeyFingerprint; not HashAPIKey, which returns the key itself
-// when no HMAC secret is configured). A wallet address is public and logged
-// as is (bugboard #2508).
+// owner id is the key's stored form, which is the raw key — a live credential —
+// on a cluster with no HMAC secret configured, so its fingerprint is logged
+// instead (auth.KeyFingerprint). A wallet address is public and logged as is
+// (bugboard #2508).
 func loggableOwnerID(ownerType, ownerID string) string {
 	if ownerType != "api_key" {
 		return ownerID
@@ -1543,9 +1539,14 @@ func loggableOwnerID(ownerType, ownerID string) string {
 // principalIdentifierCandidates returns the identifiers to look a principal up
 // under.
 //
-// API keys are stored HMAC-hashed, and MigratePlaintextAPIKeys moves any
-// leftover raw-key principal to the hashed form before the gateway serves, so
-// a key is looked up under its hashed form only.
+// A key's principal is recorded under the key's stored form: the HMAC when one
+// is configured, the raw key when it is not (MigratePlaintextAPIKeys moves any
+// leftover raw-key principal before the gateway serves). ownerID must already
+// be that form — an exchanged token's subject is, and a bare key is hashed by
+// the caller — and it is the only candidate. Hashing it here as well hashed an
+// exchanged token's subject a second time, so a key presented as a token held
+// no grant, and the CLI, which sends key management a token rather than the
+// key, was refused on every owned route (change-975).
 //
 // Wallets are stored normalised (auth.NormalizeWallet), but rows written before
 // that was true kept whatever case the client sent — so a checksummed address
@@ -1554,10 +1555,7 @@ func loggableOwnerID(ownerType, ownerID string) string {
 // working until migration 042 has run everywhere.
 //
 // For every other owner type the value is used as-is.
-func principalIdentifierCandidates(ownerType, ownerID, hashed string) []string {
-	if ownerType == "api_key" {
-		return []string{hashed}
-	}
+func principalIdentifierCandidates(ownerType, ownerID string) []string {
 	if ownerType == "wallet" {
 		if normalized := auth.NormalizeWallet(ownerID); normalized != ownerID {
 			return []string{normalized, ownerID}

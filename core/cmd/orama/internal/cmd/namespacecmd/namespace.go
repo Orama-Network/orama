@@ -81,7 +81,16 @@ var webrtcStatusCmd = &cobra.Command{
 var keysCmd = &cobra.Command{
 	Use:   "keys",
 	Short: "Manage scoped API keys (bugboard #148)",
-	Long:  "Create, list, and revoke scoped API keys. Profiles: invoke-only | app-runtime | admin.",
+	Long: `Create, list, rotate and revoke a namespace's scoped API keys. Profiles:
+invoke-only | app-runtime | admin.
+
+Who may run these: the namespace's owner or an admin member, signed in with
+'orama auth login --namespace <ns>' (RootWallet signs the challenge), or an
+admin-scope key in ORAMA_TOKEN. A developer, runtime or reader member, and a key
+holding anything less than admin, is refused with INSUFFICIENT_SCOPE: managing
+keys is handing out authority. 'orama auth whoami' shows the role a credential
+holds. The commands act on the namespace the credential belongs to; --namespace
+picks which signed-in session to use.`,
 }
 
 var keysCreateCmd = &cobra.Command{

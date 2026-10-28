@@ -50,6 +50,7 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#api-keys: orama_<sk|rk>_<payload>_<checksum>; the key names no namespace; 90 days by default, a year at most; shown once"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#api-keys: rotating keeps the original working for the overlap (7 days by default, 30 at most)"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#api-keys: a key minted with resources (five functions, or a pattern) reports and lists them and a rotation carries them over, over HTTP and the CLI; a resource outside the key's scopes, in an unenforced domain, on an admin key, leaving a scope un-narrowed, or not a selector is refused 400 at mint"
+    - "docs/whitepaper/technical-reference/vol1/14-authorization.md#api-keys: a token exchanged for an admin key lists, mints and revokes keys and lists members; a storage key's token is refused key management with INSUFFICIENT_SCOPE"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#what-a-sign-in-returns: revoking a key stops the key and the tokens exchanged from it"
     - "docs/whitepaper/technical-reference/vol1/12-gateway-architecture.md#credential-resolution: X-API-Key, Authorization: ApiKey and a bare Authorization answer Deprecation: true with what to send instead"
     - "docs/whitepaper/technical-reference/vol1/12-gateway-architecture.md#credential-resolution: a token exchanged from a key never carries the key"

@@ -21,7 +21,7 @@ func TestGatewayError_saysWhatToDoNext(t *testing.T) {
 		{CodeScopeMissing, `{"code":"INSUFFICIENT_SCOPE","error":"insufficient scope: storage"}`,
 			"--scope storage"},
 		{CodeUserJWTRequired, `{"code":"USER_JWT_REQUIRED","error":"user jwt required"}`, "signed-in wallet"},
-		{CodeOwnershipRequired, `{"code":"OWNERSHIP_REQUIRED","error":"not the owner"}`, "orama members list"},
+		{CodeOwnershipRequired, `{"code":"OWNERSHIP_REQUIRED","error":"not the owner"}`, "orama auth whoami"},
 		{CodeOperatorRequired, `{"code":"NOT_AN_OPERATOR","error":"nope"}`, "operator list"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
@@ -33,6 +33,26 @@ func TestGatewayError_saysWhatToDoNext(t *testing.T) {
 				t.Errorf("the message does not contain %q: %s", tc.contains, err.Error())
 			}
 		})
+	}
+}
+
+// OWNERSHIP_REQUIRED is both "this credential is not a member" and "only the
+// owner may do this". The gateway's sentence is the part that says which, so it
+// is kept, and the advice never points at a command the caller could not run
+// either (`orama members list` needs the authority it was just refused).
+func TestGatewayError_ownershipKeepsTheGatewaysReason(t *testing.T) {
+	for _, reason := range []string{
+		"this credential holds no grant in this namespace",
+		"only the namespace's owner may transfer it; an admin grant is not enough",
+	} {
+		err := GatewayErrorFrom(http.StatusForbidden, []byte(`{"code":"OWNERSHIP_REQUIRED","error":"`+reason+`"}`))
+		message := err.Error()
+		if !strings.Contains(message, reason) {
+			t.Errorf("the gateway's reason is lost: %s", message)
+		}
+		if strings.Contains(message, "members list") {
+			t.Errorf("the advice points at a command the caller cannot run: %s", message)
+		}
 	}
 }
 

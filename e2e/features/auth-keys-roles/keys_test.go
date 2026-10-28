@@ -126,6 +126,41 @@ func TestKeys_checksumAndExchange(t *testing.T) {
 	}
 }
 
+// TestKeys_anAdminKeyTokenManagesKeysAndMembers: a token exchanged for an
+// admin key, which is how the CLI sends ORAMA_TOKEN, lists, mints and revokes
+// keys and lists the members; a storage key's token belongs to the namespace
+// and is refused key management with INSUFFICIENT_SCOPE, never
+// OWNERSHIP_REQUIRED (change-975: the grant lookup hashed the token's subject
+// a second time and found no grant for any key token).
+func TestKeys_anAdminKeyTokenManagesKeysAndMembers(t *testing.T) {
+	t.Parallel()
+	f := harness.Fleet(t)
+	n := ns.New(t, f, ns.Options{})
+	c := harness.GW(t)
+	admin := mintKey(t, n, map[string]any{"scope": "admin", "label": "change-975"})
+	s, _, err := c.For(t).Token(t.Context(), admin.APIKey)
+	if err != nil {
+		t.Fatalf("exchanging the admin key: %v", err)
+	}
+	send(t, c, http.MethodGet, pathKeys, s.AccessToken, nil).Expect(t, http.StatusOK)
+	send(t, c, http.MethodGet, pathMembers, s.AccessToken, nil).Expect(t, http.StatusOK)
+	var k mintedKey
+	if err := send(t, c, http.MethodPost, pathKeys, s.AccessToken, map[string]any{"scope": "storage", "label": "change-975-storage"}).
+		Expect(t, http.StatusCreated).Decode(&k); err != nil {
+		t.Fatal(err)
+	}
+	protect(t, c, k.APIKey)
+	t.Cleanup(func() { revokeAtCleanup(t, n, k.ID) })
+
+	storage, _, err := c.For(t).Token(t.Context(), k.APIKey)
+	if err != nil {
+		t.Fatalf("exchanging the storage key: %v", err)
+	}
+	refusal(t, send(t, c, http.MethodGet, pathKeys, storage.AccessToken, nil), http.StatusForbidden, "INSUFFICIENT_SCOPE")
+
+	send(t, c, http.MethodDelete, keyPath(k.ID), s.AccessToken, nil).Expect(t, http.StatusOK)
+}
+
 func mustWhoami(t testing.TB, c *gw.Client, bearer string) []byte {
 	t.Helper()
 	return c.MustSend(t, gw.Req{Path: gw.PathWhoami, Bearer: bearer}).Expect(t, http.StatusOK).Body

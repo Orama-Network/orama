@@ -4366,10 +4366,19 @@ transfer the namespace itself.
 
 A namespace has exactly one owner. Everybody else holds a role:
 
-  admin    the control plane — deployments, functions, secrets, keys, raw database
-  runtime  the data plane — invoke, storage, push registration, webrtc, proxy,
-           pubsub, cache; not sending push notifications
-  reader   a member with no grant at all
+  admin      the control plane — deployments, functions, secrets, members, keys,
+             raw database; everything the owner may do except transfer, back up
+             and restore the namespace or export its whole database
+  developer  deployments, functions, databases, secrets, sending push, and the
+             data plane; not members, keys or the namespace's settings
+  runtime    the data plane — invoke, storage, push registration, webrtc, proxy,
+             pubsub, cache; not sending push notifications
+  reader     a member with no grant at all
+
+Who may run these: list, add and remove need the owner or an admin, signed in
+with 'orama auth login --namespace <ns>', or an admin-scope key in ORAMA_TOKEN.
+Transfer needs the owner's own wallet session. Any other member is refused, so
+'orama auth whoami' is how a member sees its own role.
 
 Ownership is not a role you can hand out: use 'orama members transfer'.
 ```
@@ -4434,9 +4443,14 @@ orama members transfer <wallet> [flags]
 ```text
 Make another wallet the owner of this namespace.
 
-Only the current owner may do this, and it is one step rather than a removal and
-a grant, so there is no moment where the namespace has no owner.
-You keep an admin grant, so handing a project over does not lock you out of it.
+Only the current owner may do this, signed in with its own wallet (no key holds
+the owner's role), and it is one step rather than a removal and a grant, so
+there is no moment where the namespace has no owner.
+You keep an admin grant, so handing a project over does not lock you out of it;
+the new owner removes it with 'orama members remove' if they want you gone.
+Keys minted before the transfer keep working until they expire or are revoked.
+The new owner signs in with 'orama auth login --namespace <ns>', and
+'orama namespace list' then shows the namespace as theirs.
 <wallet> must be a wallet address (0x and 40 hex digits, or a Solana public key);
 the gateway refuses anything else rather than hand the namespace to nobody.
 ```
@@ -4700,7 +4714,16 @@ orama namespace keys
 ```
 
 ```text
-Create, list, and revoke scoped API keys. Profiles: invoke-only | app-runtime | admin.
+Create, list, rotate and revoke a namespace's scoped API keys. Profiles:
+invoke-only | app-runtime | admin.
+
+Who may run these: the namespace's owner or an admin member, signed in with
+'orama auth login --namespace <ns>' (RootWallet signs the challenge), or an
+admin-scope key in ORAMA_TOKEN. A developer, runtime or reader member, and a key
+holding anything less than admin, is refused with INSUFFICIENT_SCOPE: managing
+keys is handing out authority. 'orama auth whoami' shows the role a credential
+holds. The commands act on the namespace the credential belongs to; --namespace
+picks which signed-in session to use.
 ```
 
 Subcommands: `create`, `list`, `revoke-legacy`, `revoke`, `rotate`
