@@ -109,6 +109,29 @@ func TestDeviceRevoked_signInAndRefreshCarryTheRevokersProof(t *testing.T) {
 	}
 }
 
+// feat-976 review: the body limit was the evidence bound plus 4 KiB, so
+// evidence at the bound that JSON escaping grows (a control byte is six bytes
+// escaped) was refused. Evidence is bounded once decoded.
+func TestDeviceRevoked_escapedEvidenceAtTheBoundIsKept(t *testing.T) {
+	f := newFlow(t)
+	w := newWallet(t)
+	f.member(w.address, authsvc.RoleRuntime)
+	lost := newTestDeviceKey(t)
+	if code, body := f.signIn(w, lost); code != http.StatusOK {
+		t.Fatalf("sign-in: %d %v", code, body)
+	}
+	evidence := strings.Repeat("\x01", authsvc.MaxRevocationEvidenceBytes)
+	operator := &authsvc.JWTClaims{Sub: "0xowner", Namespace: flowNamespace}
+	if code, body := f.do(f.h.NamespaceDeviceByIDHandler, http.MethodDelete, "/v1/namespace/devices/"+lost.id,
+		map[string]any{"evidence": evidence}, operator); code != http.StatusOK {
+		t.Fatalf("evidence at the bound, escaped to six times its size: %d %v", code, body)
+	}
+	code, body := f.signIn(w, lost)
+	if rec := revocationOf(t, code, body); rec["evidence"] != evidence {
+		t.Errorf("the evidence came back altered (%d bytes)", len(rec["evidence"].(string)))
+	}
+}
+
 // Property: an operator's revocation says so and carries no proof, only the
 // evidence it attached; an operator cannot attach a device proof, and evidence
 // past the bound revokes nothing.

@@ -271,6 +271,16 @@ func TestRefusedRefreshAck_aRevokedDeviceIsToldItsRevocation(t *testing.T) {
 			t.Errorf("ack = %+v, want the retryable refusal with no code", ack)
 		}
 	})
+	// feat-976 review: a device the registry does not hold revoked is never
+	// told it is; its token is refused as any revoked token is.
+	t.Run("device not in the registry", func(t *testing.T) {
+		v := &fakeJWTVerifier{revocationErr: auth.ErrDeviceNotRevoked}
+		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), revokedDevice, "c1")
+		if ack.OK || ack.Code != "" || ack.Revocation != nil || ack.Error == authRefreshUnavailableMessage {
+			t.Errorf("ack = %+v, want a plain refusal, neither DEVICE_REVOKED nor retryable", ack)
+		}
+	})
 	t.Run("revoked session", func(t *testing.T) {
 		v := &fakeJWTVerifier{revocation: rec}
 		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}

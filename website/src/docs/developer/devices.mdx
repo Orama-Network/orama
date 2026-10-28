@@ -69,7 +69,7 @@ GET    /v1/auth/devices          the account's devices, revoked ones included
 DELETE /v1/auth/devices/{id}     revoke one
 ```
 
-Revoking tombstones the device, revokes its refresh tokens (including the reuse-grace slot a just-rotated one would still have) and puts `device:<id>` on the revocation list, so its access tokens and sockets stop within ten seconds on every gateway. The account's other devices are untouched. Push registrations made from the device end with it.
+Revoking tombstones the device, revokes its refresh tokens (including the reuse-grace slot a just-rotated one would still have) and puts the device on the revocation list (for its namespace only: the same key enrolled in another namespace is untouched), so its access tokens and sockets stop within ten seconds on every gateway. The account's other devices are untouched. Push registrations made from the device end with it.
 
 Any of the account's sessions may revoke any of its devices: one bound to an active device, with that device's proof, or, under the `optional` policy, one bound to no device (which only the wallet can have made). The proof is what stops an access token lifted off one phone signing the account out of all the others. Under any other policy a session bound to no device is refused here with `DEVICE_REQUIRED`: none is issued there, and one minted before the policy was set does not get to revoke the devices the policy now protects. A session bound to a pending or revoked device can do nothing here.
 
@@ -108,7 +108,7 @@ An application may erase a device that is told `DEVICE_REVOKED`: its data, sessi
 }
 ```
 
-`revoked_by` is `device` (another of the account's devices, or the device itself, with its revoke proof), `account` (a session bound to no device: the wallet's own, under `optional`), `operator` (`/v1/namespace/devices`), `function` (`deny_device`, `deny_device_with_evidence`), or `unrecorded` (revoked before the gateway kept this, or a device whose record this gateway no longer holds). Only `device` comes with a `proof`; the others are the gateway's word, with `proof: null`.
+`revoked_by` is `device` (another of the account's devices, or the device itself, with its revoke proof), `account` (a session bound to no device: the wallet's own, under `optional`), `operator` (`/v1/namespace/devices`), `function` (`deny_device`, `deny_device_with_evidence`), or `unrecorded` (revoked before the gateway kept this). Only `device` comes with a `proof`; the others are the gateway's word, with `proof: null`.
 
 To check a proof:
 
@@ -129,6 +129,7 @@ Every refusal of the revoked device carries `revocation`, within ten seconds of 
 | The device presents | Answer |
 |---|---|
 | Its key, signing in | 403 `DEVICE_REVOKED` |
+| Its public key, starting a device link | 403 `DEVICE_REVOKED`, with no `revocation`: a public key proves nothing about who holds it |
 | Its refresh token (revoked with the device) | 403 `DEVICE_REVOKED` |
 | Its access token, on any route, public ones and function calls included | 403 `DEVICE_REVOKED` |
 | Its access token, on a WebSocket upgrade (header or `?jwt=`) | 403 `DEVICE_REVOKED`, before the upgrade |
@@ -136,6 +137,8 @@ Every refusal of the revoked device carries `revocation`, within ten seconds of 
 | An open socket opened with its token | closed with `4410` |
 
 A close frame holds at most 123 bytes, too few for a revocation, so `4410` says only that the device was revoked. A client told `4410` makes any request with the same token (`GET /v1/auth/whoami` will do) and checks the `revocation` of the 403 that answers; the TypeScript SDK does not reconnect a socket closed with `4410` (`WSCloseCode.DeviceRevoked`).
+
+A device is told `DEVICE_REVOKED` only when the gateway's device registry says it is revoked. If the registry no longer holds the device (its namespace was deleted), its token is refused `401 AUTH_REVOKED`; while the registry has not yet caught up with a revocation on that node, `503 AUTH_UNAVAILABLE`, which is retryable. An expired access token is answered `401 AUTH_EXPIRED` whatever else is true of it; the refresh that follows answers `DEVICE_REVOKED` with the revocation.
 
 A revoked token, session, key or account is not a revoked device: its refusals stay `401 AUTH_REVOKED` and close code `4403`, and carry no revocation. A capability socket closes with `4403` when the device that issued the capability is revoked: its holder is the correspondent the capability was handed to, not that device.
 

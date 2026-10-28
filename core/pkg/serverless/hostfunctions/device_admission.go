@@ -28,21 +28,14 @@ type DeviceAdmitter interface {
 	DenyPendingDevice(ctx context.Context, namespace, subject, device, approver, evidence string) error
 }
 
-// maxDeviceAdmissionsPerInvocation caps how many approve_device, deny_device
-// and deny_device_with_evidence calls one invocation (or persistent socket frame) may make. A
-// real admission decides on one device; each call writes the registry, and
-// the WASM runtime has no fuel metering, so a runaway loop would otherwise
-// hammer it.
-const maxDeviceAdmissionsPerInvocation = 16
-
 var (
 	errNoDeviceAdmitter = errors.New("this gateway cannot admit devices: it has no device registry")
 	errAdmissionNeeds   = errors.New("name the account (its subject, as get_caller_jwt_subject returns it) and the device (as get_caller_device_id returns it)")
 
 	// ErrDeviceAdmissionBudgetExceeded is the cause of an approve_device or
 	// deny_device refused because its invocation already made
-	// maxDeviceAdmissionsPerInvocation of them.
-	ErrDeviceAdmissionBudgetExceeded = fmt.Errorf("device admission budget exceeded (max %d per invocation)", maxDeviceAdmissionsPerInvocation)
+	// serverless.MaxDeviceAdmissionsPerInvocation of them.
+	ErrDeviceAdmissionBudgetExceeded = fmt.Errorf("device admission budget exceeded (max %d per invocation)", serverless.MaxDeviceAdmissionsPerInvocation)
 )
 
 // SetDeviceAdmitter wires what approve_device and deny_device act through.
@@ -112,7 +105,7 @@ func (h *HostFunctions) deviceAdmission(ctx context.Context, fn, subject, device
 	if strings.TrimSpace(subject) == "" || strings.TrimSpace(device) == "" {
 		return "", "", nil, &serverless.HostFunctionError{Function: fn, Cause: errAdmissionNeeds}
 	}
-	if n := serverless.AddDeviceAdmissionCount(ctx); n > maxDeviceAdmissionsPerInvocation {
+	if n := serverless.AddDeviceAdmissionCount(ctx); n > serverless.MaxDeviceAdmissionsPerInvocation {
 		return "", "", nil, &serverless.HostFunctionError{Function: fn, Cause: ErrDeviceAdmissionBudgetExceeded}
 	}
 	return cur.Namespace, "function:" + cur.FunctionName, h.deviceAdmitter, nil

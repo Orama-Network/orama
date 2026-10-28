@@ -69,10 +69,14 @@ func (s *Service) StartDeviceLink(ctx context.Context, namespace, subject string
 		if err := s.DeviceLinkAllowed(ctx, namespace); err != nil {
 			return nil, err
 		}
+		// Starting a link proves nothing about the caller: anyone who has a
+		// device's public key can present it. A revoked key is refused, but
+		// shown no revocation, whose proof and evidence are the device's to
+		// see; it sees them by signing in with the key, or with its token.
 		existing, err := s.Device(ctx, namespace, key.ID())
 		switch {
 		case err == nil && existing.State == DeviceStateRevoked:
-			return nil, revokedError(existing)
+			return nil, ErrDeviceRevoked
 		case err != nil && !errors.Is(err, ErrDeviceNotFound):
 			return nil, err
 		}

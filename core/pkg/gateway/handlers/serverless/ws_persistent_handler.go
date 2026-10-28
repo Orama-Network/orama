@@ -360,16 +360,20 @@ func (h *ServerlessHandlers) handleOramaControlFrame(
 }
 
 // refusedRefreshAck is the ack of an auth.refresh whose token
-// ParseAndVerifyJWT refused with err. A token refused because its device was
-// revoked is answered DEVICE_REVOKED with the device's revocation, read only
-// now that the token is refused. A revocation list or registry that cannot be
-// read is answered as retryable, and the ack never carries the read's error,
-// which can name why it failed.
+// ParseAndVerifyJWT refused with err. A token refused for its device is
+// answered DEVICE_REVOKED with the device's revocation when the registry,
+// read only now that the token is refused, confirms it; as a refused token
+// when the registry holds no such device; and as retryable when the registry
+// disagrees or cannot be read, as a revocation list that cannot be read is.
+// The ack never carries a read's error, which can name why it failed.
 func (h *ServerlessHandlers) refusedRefreshAck(ctx context.Context, err error, clientID string) oramaControlAck {
 	var revokedDevice *auth.DeviceTokenRevokedError
 	switch {
 	case errors.As(err, &revokedDevice):
 		rec, rerr := h.jwtVerifier.DeviceRevocationRecord(ctx, revokedDevice.Claims.Namespace, revokedDevice.Claims.Did)
+		if errors.Is(rerr, auth.ErrDeviceNotRevoked) {
+			return oramaControlAck{Type: "auth.refresh", Error: "invalid or expired jwt: " + auth.ErrTokenRevoked.Error()}
+		}
 		if rerr != nil {
 			h.logger.Warn("persistent WS: could not read a revoked device's revocation for auth.refresh",
 				zap.String("client_id", clientID),

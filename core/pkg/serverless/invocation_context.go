@@ -145,6 +145,25 @@ func WithDeviceAdmissionCounter(ctx context.Context) context.Context {
 	return context.WithValue(ctx, deviceAdmissionCounterKey{}, &deviceAdmissionCounter{})
 }
 
+// MaxDeviceAdmissionsPerInvocation caps how many approve_device, deny_device
+// and deny_device_with_evidence calls one invocation (or persistent socket
+// frame) may make. A real admission decides on one device; each call writes
+// the registry, and the WASM runtime has no fuel metering, so a runaway loop
+// would otherwise hammer it.
+const MaxDeviceAdmissionsPerInvocation = 16
+
+// DeviceAdmissionBudgetSpent reports whether the invocation has already made
+// MaxDeviceAdmissionsPerInvocation device-admission calls, without counting
+// one: a call that would be refused is refused before it reads its arguments
+// out of guest memory. False when the ctx carries no counter.
+func DeviceAdmissionBudgetSpent(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	dc, ok := ctx.Value(deviceAdmissionCounterKey{}).(*deviceAdmissionCounter)
+	return ok && dc.n.Load() >= MaxDeviceAdmissionsPerInvocation
+}
+
 // AddDeviceAdmissionCount adds one to the invocation's device-admission call
 // counter and returns the new running total. Returns -1 when the ctx carries no
 // counter (an untracked path) so callers can skip enforcement rather than

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hashicorp/golang-lru/v2/expirable"
 )
 
 // What a revoked device is told about its revocation.
@@ -50,9 +52,8 @@ const (
 	// RevokedByFunction is one of the namespace's functions (deny_device,
 	// deny_device_with_evidence).
 	RevokedByFunction RevokedBy = "function"
-	// RevokedByUnrecorded is a device whose revocation the gateway holds no
-	// record of: revoked before it kept one (migration 100), or one the
-	// revocation list holds revoked whose row is gone.
+	// RevokedByUnrecorded is a tombstone with no record of who revoked it:
+	// a device revoked before the registry kept one (migration 100).
 	RevokedByUnrecorded RevokedBy = "unrecorded"
 )
 
@@ -206,26 +207,101 @@ func (e *DeviceTokenRevokedError) Error() string {
 
 func (e *DeviceTokenRevokedError) Unwrap() error { return ErrTokenRevoked }
 
+// ErrDeviceNotRevoked is a device the revocation list refuses whose registry
+// row is not there: no such device, or no such namespace any more. The
+// registry holds no revocation to show, so the token is refused as revoked
+// (AUTH_REVOKED), never as a revoked device.
+var ErrDeviceNotRevoked = errors.New("the registry holds no revoked device of this id")
+
+// ErrDeviceRevocationUnconfirmed is a device the revocation list refuses whose
+// registry row says it is not revoked. The list entry is written only after
+// the tombstone commits, and a tombstone is never undone, so the two disagree
+// only while this node's read of the registry lags the write: retryable.
+var ErrDeviceRevocationUnconfirmed = errors.New("the revocation list and the registry disagree on this device")
+
 // DeviceRevocationRecord is the revocation of a device whose token the
 // revocation list refused, read from its tombstone. It is read only for a
 // request already refused for its device, never on a healthy one.
 //
-// A device the list holds revoked whose row holds no revocation (gone with a
-// deleted namespace, or not yet applied on this node) is reported
-// unrecorded: revoked, with no record of who revoked it, which is what this
-// gateway knows. A registry that cannot be read is an error, for the caller
-// to answer as retryable.
+// A device is told DEVICE_REVOKED only when its row says revoked: a row that
+// is not there is ErrDeviceNotRevoked, a row that is not revoked
+// ErrDeviceRevocationUnconfirmed, and a registry that cannot be read any
+// other error, for the caller to answer as retryable.
+//
+// A tombstone's record never changes (the first revocation's is kept), so a
+// record read is remembered (revocationRecordCache): a revoked device retrying
+// its token costs one read, not one per request.
 func (s *Service) DeviceRevocationRecord(ctx context.Context, namespace, id string) (*DeviceRevocationRecord, error) {
+	if rec, ok := s.revocationRecords.get(namespace, id); ok {
+		return rec, nil
+	}
 	d, err := s.Device(ctx, namespace, id)
 	switch {
-	case errors.Is(err, ErrDeviceNotFound):
-		return revocationRecord(id, time.Time{}, "", "", ""), nil
+	case errors.Is(err, ErrDeviceNotFound), errors.Is(err, ErrNoNamespace):
+		return nil, fmt.Errorf("device %s of %q: %w", id, namespace, ErrDeviceNotRevoked)
 	case err != nil:
 		return nil, fmt.Errorf("read the revocation of device %s: %w", id, err)
-	case d.Revocation == nil:
-		return revocationRecord(id, time.Time{}, "", "", ""), nil
+	case d.State != DeviceStateRevoked:
+		return nil, fmt.Errorf("device %s is %s: %w", id, d.State, ErrDeviceRevocationUnconfirmed)
 	}
+	s.revocationRecords.add(namespace, id, d.Revocation)
 	return d.Revocation, nil
+}
+
+// DeviceRevoked reports whether a token the revocation list refused was
+// refused because its device is revoked, as the registry confirms: what the
+// socket sweeper closes a socket with CloseDeviceRevoked for. A device the
+// registry does not confirm, or cannot be read for, is not: its socket is
+// closed as revoked (4403), and the client's next sign-in tells it the rest.
+func (s *Service) DeviceRevoked(claims *JWTClaims) bool {
+	if claims == nil || !s.revocations.DeniesDevice(claims.Namespace, claims.Did) {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deviceRevocationReadTimeout)
+	defer cancel()
+	_, err := s.DeviceRevocationRecord(ctx, claims.Namespace, claims.Did)
+	return err == nil
+}
+
+// deviceRevocationReadTimeout bounds the registry read the socket sweeper
+// makes to confirm a device's revocation, so one slow read cannot hold a
+// sweep: a close-frame write is given a second (wssession), and this the same.
+const deviceRevocationReadTimeout = time.Second
+
+// revocationRecordCacheSize bounds the device revocations a gateway
+// remembers. A record is at most the evidence bound and a proof, about
+// 17 KiB, so the cache holds at most about 17 MiB; past it the least recently
+// asked are read again.
+const revocationRecordCacheSize = 1024
+
+// revocationRecordCache remembers device revocations read from the registry.
+// Only a confirmed revocation is kept, and for as long as the list entry that
+// refuses the device's tokens lives (MaxDeviceIssuedLifetime): it never
+// changes. A device not found, not revoked, or a read that failed is not kept,
+// so it is asked again on the next refusal. The zero value (nil) remembers
+// nothing.
+type revocationRecordCache struct {
+	lru *expirable.LRU[string, *DeviceRevocationRecord]
+}
+
+func newRevocationRecordCache() *revocationRecordCache {
+	return &revocationRecordCache{
+		lru: expirable.NewLRU[string, *DeviceRevocationRecord](revocationRecordCacheSize, nil, MaxDeviceIssuedLifetime),
+	}
+}
+
+func (c *revocationRecordCache) get(namespace, id string) (*DeviceRevocationRecord, bool) {
+	if c == nil {
+		return nil, false
+	}
+	return c.lru.Get(deviceRevocationKey(namespace, id))
+}
+
+func (c *revocationRecordCache) add(namespace, id string, rec *DeviceRevocationRecord) {
+	if c == nil || rec == nil {
+		return
+	}
+	c.lru.Add(deviceRevocationKey(namespace, id), rec)
 }
 
 // revokedError is the refusal of a revoked device d.

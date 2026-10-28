@@ -55,21 +55,21 @@ func (s *Service) RevokeDevice(ctx context.Context, namespace, subject, id strin
 		  WHERE id = ? AND state != 'revoked'`, by, proof, evidence, id); err != nil {
 		return fmt.Errorf("tombstone device %s: %w", id, err)
 	}
-	return s.endDeviceSessions(ctx, id)
+	return s.endDeviceSessions(ctx, namespace, id)
 }
 
 // endDeviceSessions revokes a tombstoned device's refresh tokens, the
 // reuse-grace slot of a just-rotated one included, and puts its id on the
 // revocation list, so its access tokens and sockets stop on every gateway
 // within the list's staleness.
-func (s *Service) endDeviceSessions(ctx context.Context, id string) error {
+func (s *Service) endDeviceSessions(ctx context.Context, namespace, id string) error {
 	if _, err := s.db.Exec(client.WithInternalAuth(ctx),
 		`UPDATE refresh_tokens
 		    SET revoked_at = COALESCE(revoked_at, datetime('now')), grace_used_at = datetime('now')
 		  WHERE device_id = ? AND grace_used_at IS NULL`, id); err != nil {
 		return fmt.Errorf("end the sessions of device %s: %w", id, err)
 	}
-	if err := s.revocations.RevokeDevice(ctx, id); err != nil {
+	if err := s.revocations.RevokeDevice(ctx, namespace, id); err != nil {
 		return fmt.Errorf("refuse the access tokens of device %s: %w", id, err)
 	}
 	return nil

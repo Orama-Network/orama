@@ -338,20 +338,30 @@ const sessionRevokedMessage = "this session was ended, or the key it came from w
 // claims, and the refusal is answered by refuseRevokedDevice.
 const deviceRevokedMessage = "this device was revoked; it cannot sign in or hold a session again"
 
-// refuseRevokedDevice answers a token refused because its device was revoked:
-// 403 DEVICE_REVOKED with the device's revocation, for the client to check
-// before it acts on it. The revocation is read here, for a request already
-// refused, never on a healthy one; a registry that cannot be read is a
-// retryable 503, as a revocation list that cannot be read is.
+// refuseRevokedDevice answers a token the revocation list refused for its
+// device. The registry decides what it is told, read here, for a request
+// already refused, never on a healthy one (auth.Service.DeviceRevocationRecord):
+//
+//   - the device's row is revoked: 403 DEVICE_REVOKED with its revocation,
+//     for the client to check before it acts on it;
+//   - there is no such device, or namespace: 401 AUTH_REVOKED, the token's
+//     refusal, since there is no revocation to show and a device that is not
+//     revoked is never told it is;
+//   - the row is not revoked, or cannot be read: a retryable 503, as a
+//     revocation list that cannot be read is. The list is written after the
+//     tombstone, so a row that disagrees is a read that has not caught up.
 func (g *Gateway) refuseRevokedDevice(w http.ResponseWriter, r *http.Request, claims *auth.JWTClaims) {
 	rec, err := g.authService.DeviceRevocationRecord(r.Context(), claims.Namespace, claims.Did)
-	if err != nil {
-		g.logger.ComponentWarn("gateway", "could not read a revoked device's revocation",
+	switch {
+	case errors.Is(err, auth.ErrDeviceNotRevoked):
+		unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+	case err != nil:
+		g.logger.ComponentWarn("gateway", "could not confirm a revoked device's revocation",
 			zap.String("device_id", claims.Did), zap.Error(err))
 		unavailable(w, CodeAuthUnavailable, authUnavailableMessage)
-		return
+	default:
+		forbidden(w, CodeDeviceRevoked, deviceRevokedMessage, map[string]any{"revocation": rec})
 	}
-	forbidden(w, CodeDeviceRevoked, deviceRevokedMessage, map[string]any{"revocation": rec})
 }
 
 // refuseProxyCredential answers a credential validateAuthForNamespaceProxy

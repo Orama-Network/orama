@@ -103,7 +103,7 @@ func TestDeviceAdmission_budgetIsPerInvocation(t *testing.T) {
 	h, base := admitterHost(a)
 	ctx := serverless.WithDeviceAdmissionCounter(base)
 
-	for i := 0; i < maxDeviceAdmissionsPerInvocation; i++ {
+	for i := 0; i < serverless.MaxDeviceAdmissionsPerInvocation; i++ {
 		if err := h.ApproveDevice(ctx, "0xw", "d"); err != nil {
 			t.Fatalf("call %d within the budget failed: %v", i+1, err)
 		}
@@ -111,8 +111,8 @@ func TestDeviceAdmission_budgetIsPerInvocation(t *testing.T) {
 	if err := h.DenyDeviceWithEvidence(ctx, "0xw", "d", "e"); !errors.Is(err, ErrDeviceAdmissionBudgetExceeded) {
 		t.Fatalf("call past the budget: err = %v, want ErrDeviceAdmissionBudgetExceeded", err)
 	}
-	if len(a.calls) != maxDeviceAdmissionsPerInvocation {
-		t.Errorf("registry saw %d calls, want %d", len(a.calls), maxDeviceAdmissionsPerInvocation)
+	if len(a.calls) != serverless.MaxDeviceAdmissionsPerInvocation {
+		t.Errorf("registry saw %d calls, want %d", len(a.calls), serverless.MaxDeviceAdmissionsPerInvocation)
 	}
 	if err := h.ApproveDevice(serverless.WithDeviceAdmissionCounter(base), "0xw", "d"); err != nil {
 		t.Errorf("a fresh invocation was refused: %v", err)

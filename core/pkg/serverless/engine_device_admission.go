@@ -3,6 +3,7 @@ package serverless
 import (
 	"context"
 
+	"github.com/Orama-Network/orama/core/pkg/gateway/auth"
 	"github.com/tetratelabs/wazero/api"
 	"go.uber.org/zap"
 )
@@ -32,8 +33,23 @@ func (e *Engine) hDenyDevice(ctx context.Context, mod api.Module, subPtr, subLen
 // hDenyDeviceWithEvidence revokes a pending device of a subject and keeps the
 // function's evidence with its tombstone. Returns 1 on success, 0 on failure,
 // whose reason the gateway log records.
+//
+// Evidence past the bound, and a call past the invocation's budget, are
+// refused before anything is copied out of guest memory: the guest names the
+// length, and a copy it was never going to be allowed is the guest's to waste,
+// not the gateway's.
 func (e *Engine) hDenyDeviceWithEvidence(ctx context.Context, mod api.Module,
 	subPtr, subLen, devPtr, devLen, evPtr, evLen uint32) uint32 {
+	switch {
+	case evLen > auth.MaxRevocationEvidenceBytes:
+		HostLogger(ctx, e.logger).Warn("host function deny_device_with_evidence refused",
+			zap.Error(auth.ErrRevocationEvidenceInvalid))
+		return 0
+	case DeviceAdmissionBudgetSpent(ctx):
+		HostLogger(ctx, e.logger).Warn("host function deny_device_with_evidence refused",
+			zap.Int("max_per_invocation", MaxDeviceAdmissionsPerInvocation))
+		return 0
+	}
 	evidence, ok := e.executor.ReadFromGuest(mod, evPtr, evLen)
 	if !ok {
 		return 0

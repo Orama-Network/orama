@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // byAccount is a revocation from a session bound to no device.
@@ -48,7 +49,14 @@ func TestRevokeDevice_byADeviceKeepsItsProofForEveryRefusal(t *testing.T) {
 	_, refusals["sign-in"] = s.EnrolDevice(ctx, "anchat", deviceOwner, key, "", DeviceStateActive, "")
 	_, refusals["active device"] = s.RequireActiveDevice(ctx, "anchat", deviceOwner, lost.id)
 	_, refusals["session device"] = s.RequireSessionDevice(ctx, "anchat", deviceOwner, lost.id)
-	_, refusals["device link"] = s.StartDeviceLink(ctx, "anchat", "", key, "")
+	// Starting a link proves nothing about the caller, so it is refused with
+	// no record (feat-976 review): anyone holding a revoked device's public
+	// key could otherwise read the revoker's key, proof and evidence.
+	_, linkErr := s.StartDeviceLink(ctx, "anchat", "", key, "")
+	var shown *DeviceRevokedError
+	if !errors.Is(linkErr, ErrDeviceRevoked) || errors.As(linkErr, &shown) {
+		t.Errorf("starting a link with a revoked key: %v, want ErrDeviceRevoked with no revocation", linkErr)
+	}
 	for path, err := range refusals {
 		rec := revokedRecord(t, err)
 		if rec.DeviceID != lost.id || rec.RevokedBy != RevokedByDevice || rec.RevokedAt == nil {
@@ -257,12 +265,90 @@ func TestParseAndVerifyJWT_aRevokedDevicesTokenNamesItsDevice(t *testing.T) {
 	}
 }
 
-// A device the list holds revoked whose row is gone is reported revoked, with
-// no record of who revoked it, which is what the gateway knows.
-func TestDeviceRevocationRecord_aDeviceWithNoRowIsUnrecorded(t *testing.T) {
+// feat-976 review: the list alone decided DEVICE_REVOKED, so a device whose
+// row was not revoked, or not there, was told it was, as "unrecorded". The
+// registry decides now: no row, or no namespace, is ErrDeviceNotRevoked; a row
+// that is not revoked is ErrDeviceRevocationUnconfirmed; neither gives a
+// record.
+func TestDeviceRevocationRecord_onlyARevokedRowHasOne(t *testing.T) {
 	s, _, _ := realRegistry(t)
-	rec, err := s.DeviceRevocationRecord(context.Background(), "anchat", "gone")
-	if err != nil || rec.DeviceID != "gone" || rec.RevokedBy != RevokedByUnrecorded || rec.Proof != nil {
-		t.Errorf("record %+v (%v), want an unrecorded revocation of gone", rec, err)
+	ctx := context.Background()
+	healthy := ed25519Device(t)
+	mustEnrol(t, s, deviceOwner, healthy, DeviceStateActive)
+
+	for name, tc := range map[string]struct {
+		namespace, id string
+		want          error
+	}{
+		"no such device":    {"anchat", "gone", ErrDeviceNotRevoked},
+		"no such namespace": {"deleted-namespace", healthy.id, ErrDeviceNotRevoked},
+		"an active device":  {"anchat", healthy.id, ErrDeviceRevocationUnconfirmed},
+	} {
+		if rec, err := s.DeviceRevocationRecord(ctx, tc.namespace, tc.id); rec != nil || !errors.Is(err, tc.want) {
+			t.Errorf("%s: record %+v, err %v, want %v", name, rec, err, tc.want)
+		}
+	}
+	// The socket sweeper asks the same: a device the registry does not
+	// confirm is not closed as a revoked device.
+	if err := s.revocations.RevokeDevice(ctx, "anchat", healthy.id); err != nil {
+		t.Fatal(err)
+	}
+	if s.DeviceRevoked(&JWTClaims{Namespace: "anchat", Did: healthy.id}) {
+		t.Error("the sweeper would tell a device whose row is active that it was revoked")
+	}
+}
+
+// feat-976 review: every refusal of a revoked device read the registry. A
+// tombstone's record never changes, so it is read once; what is not a record
+// is read again.
+func TestDeviceRevocationRecord_aRecordIsReadOnce(t *testing.T) {
+	s, db, _ := realRegistry(t)
+	ctx := context.Background()
+	lost, pending := ed25519Device(t), ed25519Device(t)
+	mustEnrol(t, s, deviceOwner, lost, DeviceStateActive)
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id, DeviceRevocation{By: RevokedByAccount, Evidence: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DeviceRevocationRecord(ctx, "anchat", lost.id); err != nil {
+		t.Fatal(err)
+	}
+	mustEnrol(t, s, deviceOwner, pending, DeviceStateActive)
+	if _, err := s.DeviceRevocationRecord(ctx, "anchat", pending.id); !errors.Is(err, ErrDeviceRevocationUnconfirmed) {
+		t.Fatalf("an active device: %v", err)
+	}
+	if _, err := db.db.Exec(`UPDATE session_devices SET state = 'revoked', revoked_by = 'operator', revoked_at = datetime('now') WHERE id = ?`, pending.id); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := s.DeviceRevocationRecord(ctx, "anchat", pending.id); err != nil || rec.RevokedBy != RevokedByOperator {
+		t.Errorf("a device revoked after it was asked about: %+v %v; a result that was no record was kept", rec, err)
+	}
+
+	if _, err := db.db.Exec(`DROP TABLE session_devices`); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.DeviceRevocationRecord(ctx, "anchat", lost.id)
+	if err != nil || rec.Evidence == nil || *rec.Evidence != "v1" {
+		t.Errorf("a record already read: %+v %v, want it without a read", rec, err)
+	}
+}
+
+// feat-976 review: revocation was checked before expiry, so a revoked
+// device's expired tokens, presented for the seven days its list entry lives,
+// each cost a read of the registry. An expired token is answered as expired;
+// the refresh it prompts says the device was revoked.
+func TestParseAndVerifyJWT_anExpiredTokenOfARevokedDeviceIsExpired(t *testing.T) {
+	s, _, _ := realRegistry(t)
+	ctx := context.Background()
+	lost := ed25519Device(t)
+	mustEnrol(t, s, deviceOwner, lost, DeviceStateActive)
+	token, _, err := s.GenerateBoundJWT("anchat", deviceOwner, -2*time.Minute, nil, SessionBinding{DeviceID: lost.id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id, byAccount); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ParseAndVerifyJWT(token); !errors.Is(err, ErrTokenExpired) {
+		t.Errorf("an expired token of a revoked device: %v, want ErrTokenExpired", err)
 	}
 }

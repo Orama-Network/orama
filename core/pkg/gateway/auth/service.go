@@ -48,6 +48,9 @@ type Service struct {
 	// revocations is the list of tokens this gateway refuses. Built in
 	// NewService whenever there is a database to read it from.
 	revocations *RevocationList
+	// revocationRecords remembers the revocations of devices whose tokens
+	// were refused (DeviceRevocationRecord).
+	revocationRecords *revocationRecordCache
 
 	// audit records the auth events worth keeping. Built alongside the
 	// revocations, for the same reason: a Service with a database has one.
@@ -101,10 +104,11 @@ func NewService(logger *logging.ColoredLogger, orm client.NetworkClient, signing
 		return nil, ErrNoAPIKeyHMACSecret
 	}
 	s := &Service{
-		logger:           logger,
-		orm:              orm,
-		defaultNS:        defaultNS,
-		apiKeyHMACSecret: apiKeyHMACSecret,
+		logger:            logger,
+		orm:               orm,
+		defaultNS:         defaultNS,
+		apiKeyHMACSecret:  apiKeyHMACSecret,
+		revocationRecords: newRevocationRecordCache(),
 	}
 
 	// Every Service with a database consults the revocations. There is no way
@@ -941,7 +945,7 @@ func (s *Service) refreshTokenSpent(ctx context.Context, ormDB client.DatabaseCl
 func (s *Service) refusedForDevice(ctx context.Context, namespace, deviceID string) error {
 	d, err := s.Device(ctx, namespace, deviceID)
 	switch {
-	case errors.Is(err, ErrDeviceNotFound):
+	case errors.Is(err, ErrDeviceNotFound), errors.Is(err, ErrNoNamespace):
 		return nil
 	case err != nil:
 		return fmt.Errorf("%w: read the token's device: %v", ErrRefreshTransient, err)

@@ -188,9 +188,11 @@ func (r *RevocationList) Denies(claims *JWTClaims, subjectKeys []string) (bool, 
 	// A revoked device or an ended session is refused whenever its token was
 	// minted: neither can mint another after the revocation, so there is no
 	// newer grant for an issue-time boundary to protect.
-	for _, key := range []string{bindingRevocationKey(deviceRevocationPrefix, claims.Did),
-		bindingRevocationKey(sessionRevocationPrefix, claims.Sid)} {
-		if _, denied := r.bySubject[key]; key != "" && denied {
+	if r.deniesDeviceLocked(claims.Namespace, claims.Did) {
+		return true, nil
+	}
+	if key := bindingRevocationKey(sessionRevocationPrefix, claims.Sid); key != "" {
+		if _, denied := r.bySubject[key]; denied {
 			return true, nil
 		}
 	}
@@ -260,34 +262,64 @@ func bindingRevocationKey(prefix, id string) string {
 // access token lives far less.
 const MaxDeviceIssuedLifetime = 7 * 24 * time.Hour
 
-// RevokeDevice refuses every token bound to a device, and every capability it
-// issued. The entry outlives all of them; past that, the device's tombstone is
-// what refuses it, since nothing new can be minted for it. It used to last one
-// access-token lifetime, which let a capability the device had handed out work
-// again an hour after the device was revoked.
-func (r *RevocationList) RevokeDevice(ctx context.Context, deviceID string) error {
-	if strings.TrimSpace(deviceID) == "" {
+// RevokeDevice refuses every token bound to a device of namespace, and every
+// capability it issued. The entry outlives all of them; past that, the
+// device's tombstone is what refuses it, since nothing new can be minted for
+// it. It used to last one access-token lifetime, which let a capability the
+// device had handed out work again an hour after the device was revoked.
+//
+// The entry names the namespace (deviceRevocationKey): a device id is a key's
+// thumbprint, and an entry naming the id alone would refuse the same key
+// enrolled in another namespace for up to seven days.
+func (r *RevocationList) RevokeDevice(ctx context.Context, namespace, deviceID string) error {
+	key := deviceRevocationKey(namespace, deviceID)
+	if key == "" {
 		return fmt.Errorf("cannot revoke a device with no id")
 	}
-	return r.RevokeSubject(ctx, deviceRevocationPrefix+deviceID, "device revoked", MaxDeviceIssuedLifetime)
+	return r.RevokeSubject(ctx, key, "device revoked", MaxDeviceIssuedLifetime)
 }
 
-// DeniesDevice reports whether a device is on the list. A token Denies
-// refused, bound to a device this reports, was refused for its device: what
-// tells DEVICE_REVOKED from AUTH_REVOKED. It answers from the copy Denies just
-// checked, and never reads the registry.
-func (r *RevocationList) DeniesDevice(deviceID string) bool {
+// DeniesDevice reports whether a device of namespace is on the list. A token
+// Denies refused, bound to a device this reports, was refused for its device.
+// It answers from the copy Denies just checked, and never reads the registry;
+// whether the device is told DEVICE_REVOKED is the registry's to confirm
+// (Service.DeviceRevocationRecord).
+func (r *RevocationList) DeniesDevice(namespace, deviceID string) bool {
 	if r == nil {
-		return false
-	}
-	key := bindingRevocationKey(deviceRevocationPrefix, deviceID)
-	if key == "" {
 		return false
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	_, denied := r.bySubject[key]
-	return denied
+	return r.deniesDeviceLocked(namespace, deviceID)
+}
+
+// deniesDeviceLocked is DeniesDevice under r.mu. It also honours an entry
+// naming the device id alone (legacyDeviceRevocationKey): gateways before
+// 0.3.13 wrote those, and one written by such a gateway, during a rolling
+// upgrade or before it, lives MaxDeviceIssuedLifetime.
+func (r *RevocationList) deniesDeviceLocked(namespace, deviceID string) bool {
+	for _, key := range []string{deviceRevocationKey(namespace, deviceID), legacyDeviceRevocationKey(deviceID)} {
+		if _, denied := r.bySubject[key]; key != "" && denied {
+			return true
+		}
+	}
+	return false
+}
+
+// deviceRevocationKey is the subject a device of namespace is revoked under:
+// "device:<namespace>:<id>", the namespace read as a session names it (none
+// is the lobby). "" for no device.
+func deviceRevocationKey(namespace, deviceID string) string {
+	if strings.TrimSpace(deviceID) == "" {
+		return ""
+	}
+	return bindingRevocationKey(deviceRevocationPrefix+sessionNamespace(namespace)+":", deviceID)
+}
+
+// legacyDeviceRevocationKey is the subject gateways before 0.3.13 revoked a
+// device under, "device:<id>", read and never written.
+func legacyDeviceRevocationKey(deviceID string) string {
+	return bindingRevocationKey(deviceRevocationPrefix, deviceID)
 }
 
 // RevokeSessionID refuses every access token of one session, whichever
@@ -733,13 +765,6 @@ func (s *Service) Revoked(claims *JWTClaims) (bool, error) {
 		return false, nil
 	}
 	return s.revocations.Denies(claims, s.revocationSubjectKeys(claims.Sub))
-}
-
-// DeviceRevoked reports whether claims' device is on the revocation list. It
-// is asked of a token Revoked already refused, to tell a revoked device
-// (DEVICE_REVOKED) from a revoked token, session or subject (AUTH_REVOKED).
-func (s *Service) DeviceRevoked(claims *JWTClaims) bool {
-	return claims != nil && s.revocations.DeniesDevice(claims.Did)
 }
 
 // RevocationsUsable reports whether the list can answer from the copy it holds,

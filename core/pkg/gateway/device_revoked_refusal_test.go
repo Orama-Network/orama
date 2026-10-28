@@ -45,7 +45,7 @@ func revokedDeviceToken(t *testing.T) (*Gateway, string, *sql.DB) {
 		WHERE id = 'dev-1'`, revokedDeviceEvidence); err != nil {
 		t.Fatalf("tombstone the device: %v", err)
 	}
-	if err := g.authService.Revocations().RevokeDevice(context.Background(), "dev-1"); err != nil {
+	if err := g.authService.Revocations().RevokeDevice(context.Background(), "anchat", "dev-1"); err != nil {
 		t.Fatalf("revoke the device: %v", err)
 	}
 	return g, token, db
@@ -168,4 +168,42 @@ func TestAuthMiddleware_aRevokedDeviceWhoseRevocationCannotBeReadIsRetryable(t *
 		t.Error("the handler ran on a revoked device's token")
 	})).ServeHTTP(rec, r)
 	assertUnavailable(t, rec)
+}
+
+// feat-976 review: a device the list refuses is told DEVICE_REVOKED only when
+// its row says revoked. A row that is not revoked is the registry's read not
+// having caught up (503, retryable); a device that is not in the registry, or
+// whose namespace is gone, has its token refused as revoked (AUTH_REVOKED).
+func TestAuthMiddleware_aDeviceTheRegistryDoesNotHoldRevokedIsNeverToldDeviceRevoked(t *testing.T) {
+	serve := func(g *Gateway, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/rpc", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		g.authMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the handler ran on a token the list refuses")
+		})).ServeHTTP(rec, r)
+		return rec
+	}
+
+	t.Run("row active", func(t *testing.T) {
+		g, token, db := revokedDeviceToken(t)
+		if _, err := db.Exec(`UPDATE session_devices SET state = 'active', revoked_by = NULL WHERE id = 'dev-1'`); err != nil {
+			t.Fatal(err)
+		}
+		assertUnavailable(t, serve(g, token))
+	})
+	t.Run("no row", func(t *testing.T) {
+		g, token, db := revokedDeviceToken(t)
+		if _, err := db.Exec(`DELETE FROM session_devices WHERE id = 'dev-1'`); err != nil {
+			t.Fatal(err)
+		}
+		assertAuthCode(t, serve(g, token), CodeAuthRevoked)
+	})
+	t.Run("namespace deleted", func(t *testing.T) {
+		g, token, db := revokedDeviceToken(t)
+		if _, err := db.Exec(`DELETE FROM namespaces WHERE name = 'anchat'`); err != nil {
+			t.Fatal(err)
+		}
+		assertAuthCode(t, serve(g, token), CodeAuthRevoked)
+	})
 }

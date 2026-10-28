@@ -184,12 +184,12 @@ func (s *Service) DenyPendingDevice(ctx context.Context, namespace, subject, id,
 		case d.State == DeviceStateRevoked:
 			// Denied before, or revoked: finish ending its sessions, which a
 			// denial that failed half way may have left.
-			return s.endDeviceSessions(ctx, id)
+			return s.endDeviceSessions(ctx, namespace, id)
 		default:
 			return ErrDeviceNotPending
 		}
 	}
-	if err := s.endDeviceSessions(ctx, id); err != nil {
+	if err := s.endDeviceSessions(ctx, namespace, id); err != nil {
 		return err
 	}
 	s.recordAdmission(ctx, namespace, subject, id, approver, AuditDeviceLoginDenied)

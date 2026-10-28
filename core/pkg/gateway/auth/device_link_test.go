@@ -196,24 +196,47 @@ func TestRevocationList_refusesARevokedDeviceOrSessionWhenever(t *testing.T) {
 	s, _ := serviceWithRevocations(t)
 	ctx := context.Background()
 	later := time.Now().Add(time.Hour).Unix() // minted after the revocation
-	if err := s.revocations.RevokeDevice(ctx, "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"); err != nil {
+	if err := s.revocations.RevokeDevice(ctx, "anchat", "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"); err != nil {
 		t.Fatalf("revoke device: %v", err)
 	}
 	if err := s.revocations.RevokeSessionID(ctx, "session-1"); err != nil {
 		t.Fatalf("revoke session: %v", err)
 	}
 	for name, c := range map[string]*JWTClaims{
-		"the device":  {Sub: "0xa", Did: "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k", Iat: later},
+		"the device":  {Sub: "0xa", Namespace: "anchat", Did: "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k", Iat: later},
 		"the session": {Sub: "0xa", Sid: "session-1", Iat: later},
 	} {
 		if !mustRevoked(s, c) {
 			t.Errorf("a token of %s was accepted after it was revoked", name)
 		}
 	}
-	if mustRevoked(s, &JWTClaims{Sub: "0xa", Did: "another", Sid: "session-2", Iat: later}) {
+	if mustRevoked(s, &JWTClaims{Sub: "0xa", Namespace: "anchat", Did: "another", Sid: "session-2", Iat: later}) {
 		t.Error("a token of another device and session was refused")
+	}
+	// The entry names its namespace: the same key enrolled in another
+	// namespace is another device (feat-976 review).
+	if mustRevoked(s, &JWTClaims{Sub: "0xa", Namespace: "other", Did: "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k", Iat: later}) {
+		t.Error("revoking a device in one namespace refused the same key in another")
 	}
 	if err := s.revocations.RevokeSessionID(ctx, ""); err == nil {
 		t.Error("an empty session id was revoked")
+	}
+}
+
+// A gateway before 0.3.13 revoked a device under "device:<id>", naming no
+// namespace. An entry it wrote, during a rolling upgrade or in the seven days
+// before, still refuses the device's tokens.
+func TestRevocationList_honoursAnUnscopedDeviceEntry(t *testing.T) {
+	s, _ := serviceWithRevocations(t)
+	ctx := context.Background()
+	if err := s.revocations.RevokeSubject(ctx, "device:legacy-device", "device revoked", MaxDeviceIssuedLifetime); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour).Unix()
+	if !mustRevoked(s, &JWTClaims{Sub: "0xa", Namespace: "anchat", Did: "legacy-device", Iat: later}) {
+		t.Error("an unscoped entry no longer refuses its device's tokens")
+	}
+	if !s.revocations.DeniesDevice("anchat", "legacy-device") {
+		t.Error("an unscoped entry is not reported as the device's")
 	}
 }

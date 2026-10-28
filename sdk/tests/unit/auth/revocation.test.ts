@@ -153,6 +153,45 @@ describe('verifyDeviceRevocation', () => {
     expect(verdict.status).toBe('invalid');
     expect(verifySignature).toHaveBeenCalledOnce();
   });
+
+  /**
+   * feat-976 review: a key WebCrypto will not import (a point off the curve)
+   * or a verifier that fails (a platform without Ed25519) threw out of the
+   * check instead of answering it.
+   */
+  it('answers invalid, not an exception, for a key it cannot check', async () => {
+    const me = await device('Ed25519');
+    const offCurve = { kty: 'EC', crv: 'P-256', x: b64url(new Uint8Array(32).fill(1)), y: b64url(new Uint8Array(32).fill(1)) };
+    const forged: DeviceRevocation = {
+      device_id: me.id,
+      revoked_at: null,
+      revoked_by: 'device',
+      proof: {
+        namespace: NAMESPACE,
+        device_id: await deviceIdOf(offCurve),
+        public_key: offCurve,
+        iat: 1_800_000_000,
+        id: 'proof-id-0123456789',
+        sig: b64url(new Uint8Array(64).fill(2)),
+      },
+      evidence: null,
+    };
+    const opts = { deviceId: me.id, namespace: NAMESPACE, trustedDeviceIds: [forged.proof!.device_id] };
+    const offCurveVerdict = await verifyDeviceRevocation(forged, opts);
+    expect(offCurveVerdict.status).toBe('invalid');
+    expect(offCurveVerdict.status === 'invalid' && offCurveVerdict.reason).toMatch(/could not be checked/);
+
+    const revoker = await device('Ed25519');
+    const unsupported = await verifyDeviceRevocation(await revokedBy(revoker, me.id), {
+      deviceId: me.id,
+      namespace: NAMESPACE,
+      trustedDeviceIds: [revoker.id],
+      verifySignature: async () => {
+        throw new Error('Ed25519 is not supported');
+      },
+    });
+    expect(unsupported).toMatchObject({ status: 'invalid', reason: expect.stringContaining('Ed25519 is not supported') });
+  });
 });
 
 describe('deviceRevocationOf and revokeDevice', () => {

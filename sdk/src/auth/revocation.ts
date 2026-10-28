@@ -171,7 +171,18 @@ export async function verifyDeviceRevocation(
   }
   const message = deviceProofMessage("revoke", proof.namespace, revocation.device_id, proof.iat, proof.id);
   const verify = options.verifySignature ?? webCryptoVerify;
-  if (!(await verify(proof.public_key, message, proof.sig))) {
+  // A key the platform will not import (off the curve, malformed, or an
+  // algorithm it lacks, as Ed25519 on an older WebCrypto) throws. The answer
+  // to a refusal is a verdict, never an exception the caller did not expect:
+  // the proof is not one this device can check, so it proves nothing.
+  let verified: boolean;
+  try {
+    verified = await verify(proof.public_key, message, proof.sig);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return invalid(`the proof's signature could not be checked: ${why}`);
+  }
+  if (!verified) {
     return invalid("the proof's signature does not verify");
   }
   const selfRevoked = proof.device_id === options.deviceId;

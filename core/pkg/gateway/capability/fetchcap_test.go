@@ -185,7 +185,7 @@ func TestIssuer_CheckFetchHonoursRevocationByIdAndByDevice(t *testing.T) {
 		t.Errorf("revoking one capability reached another: %v", err)
 	}
 
-	if err := list.RevokeDevice(ctx, "device-1"); err != nil {
+	if err := list.RevokeDevice(ctx, "anchat", "device-1"); err != nil {
 		t.Fatalf("RevokeDevice: %v", err)
 	}
 	if _, err := i.CheckFetch(caps[1].Token, "anchat", fetchCID); !errors.Is(err, ErrFetchRevoked) {

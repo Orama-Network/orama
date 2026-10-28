@@ -307,10 +307,14 @@ func (s *Service) deviceRegistry(ctx context.Context, namespace string) (client.
 		return nil, nil, fmt.Errorf("resolve the namespace %q: %w", namespace, err)
 	}
 	if nsID == nil {
-		return nil, nil, fmt.Errorf("no namespace %q", namespace)
+		return nil, nil, fmt.Errorf("%w: %q", ErrNoNamespace, namespace)
 	}
 	return db, nsID, nil
 }
+
+// ErrNoNamespace is a device or session call for a namespace the registry
+// does not hold, a deleted one included.
+var ErrNoNamespace = errors.New("no such namespace")
 
 // sessionNamespace is the namespace a session call names, read the way
 // ResolveNamespaceID reads it: none is the lobby. The CLI refreshes with

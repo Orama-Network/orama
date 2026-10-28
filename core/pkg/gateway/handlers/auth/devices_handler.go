@@ -142,8 +142,19 @@ type DeviceRevokeRequest struct {
 	Evidence    string               `json:"evidence"`
 }
 
-// revokeBodyLimit is the evidence's bound and room for the proof around it.
-const revokeBodyLimit = authsvc.MaxRevocationEvidenceBytes + 4096
+// jsonEscapeExpansion is the most a byte of text can grow when JSON escapes
+// it: a control byte is written \u00XX, six bytes for one.
+const jsonEscapeExpansion = 6
+
+// revokeProofRoom is the room the device proof and the rest of the object take
+// around the evidence.
+const revokeProofRoom = 4096
+
+// revokeBodyLimit is what a revocation's body may be: evidence at its bound,
+// however its client escaped it, and room for the proof. The bound itself is
+// checked on the decoded evidence (authsvc.ValidRevocationEvidence); this only
+// stops a body that cannot hold valid evidence from being read whole.
+const revokeBodyLimit = authsvc.MaxRevocationEvidenceBytes*jsonEscapeExpansion + revokeProofRoom
 
 // readRevokeRequest reads a revocation's body, which may be empty. It writes
 // the refusal itself.

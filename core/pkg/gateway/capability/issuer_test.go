@@ -114,7 +114,7 @@ func TestIssuer_RevokeRefusesTheCapabilityAndNoOther(t *testing.T) {
 	}
 
 	_, fromDevice, _ := i.authority.Mint("anchat", "rpc-router", "m", "device-3", time.Hour, time.Now())
-	if err := list.RevokeDevice(ctx, "device-3"); err != nil {
+	if err := list.RevokeDevice(ctx, "anchat", "device-3"); err != nil {
 		t.Fatalf("revoke device: %v", err)
 	}
 	if !denied(list, fromDevice) {
@@ -128,7 +128,7 @@ func TestIssuer_RevokeRefusesTheCapabilityAndNoOther(t *testing.T) {
 func TestRevokeDevice_isRememberedAsLongAsACapabilityLives(t *testing.T) {
 	table := &revokedTokensTable{}
 	list := auth.NewRevocationList(func() client.DatabaseClient { return table }, nil)
-	if err := list.RevokeDevice(context.Background(), "device-1"); err != nil {
+	if err := list.RevokeDevice(context.Background(), "anchat", "device-1"); err != nil {
 		t.Fatalf("revoke device: %v", err)
 	}
 	if len(table.rows) != 1 {

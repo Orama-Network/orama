@@ -173,6 +173,14 @@ func TestDeviceRevoked_everyRefusalOfItsTokenCarriesTheRevocation(t *testing.T) 
 		}
 	}
 
+	// Starting a device link proves nothing about holding the key, so its
+	// refusal names the revocation but does not hand its record to whoever
+	// presented the public key.
+	link := postJSON(t, c, pathDeviceStart, "", map[string]any{"namespace": n.Name, "device_key": lost.PublicJWK()})
+	if body := expectCode(t, link, http.StatusForbidden, "DEVICE_REVOKED"); body["revocation"] != nil {
+		t.Errorf("a device link started with the revoked key was handed its revocation: %.400s", link.Body)
+	}
+
 	if _, err := c.For(t).Logout(t.Context(), keptS.AccessToken, keptS.RefreshToken, n.Name, false); err != nil {
 		t.Fatal(err)
 	}

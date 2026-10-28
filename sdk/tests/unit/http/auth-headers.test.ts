@@ -136,3 +136,43 @@ describe('the exchange', () => {
     expect(seen.urls.filter((u) => u.endsWith('/v1/auth/token'))).toHaveLength(0);
   });
 });
+
+/**
+ * feat-976 review: a revoked device still holds its old token, and the client
+ * sent it to the routes it signs in again with. The gateway refuses a revoked
+ * device's token on every route, so the sign-in was answered DEVICE_REVOKED and
+ * the device could never get a new session.
+ */
+describe('a route that establishes a session', () => {
+  const sessionRoutes = [
+    '/v1/auth/challenge',
+    '/v1/auth/verify',
+    '/v1/auth/refresh',
+    '/v1/auth/device',
+    '/v1/auth/device/token',
+    '/v1/auth/api-key',
+  ];
+
+  it.each(sessionRoutes)('%s is sent no stored token', async (route) => {
+    const { http, seen } = client({ jwt: JWT });
+    await http.request('POST', route, {});
+
+    expect(seen.headers['Authorization']).toBeUndefined();
+  });
+
+  it.each(sessionRoutes)('%s does not exchange the key first', async (route) => {
+    const { http, seen } = client({ apiKey: KEY });
+    await http.request('POST', route, {});
+
+    expect(seen.urls.filter((u) => u.endsWith('/v1/auth/token'))).toHaveLength(0);
+    expect(seen.headers['Authorization']).toBeUndefined();
+  });
+
+  it('a route that uses the session still carries it', async () => {
+    const { http, seen } = client({ jwt: JWT });
+    await http.request('POST', '/v1/auth/devices/approve', {});
+    await http.request('POST', '/v1/auth/logout', {});
+
+    expect(seen.headers['Authorization']).toBe(`Bearer ${JWT}`);
+  });
+});

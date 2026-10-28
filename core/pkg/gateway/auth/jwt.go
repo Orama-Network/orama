@@ -316,22 +316,11 @@ func (s *Service) ParseAndVerifyJWT(token string) (*JWTClaims, error) {
 		return nil, fmt.Errorf("the key %s signs for %q, and this token claims %q",
 			bound.KID, bound.Namespace, claims.Namespace)
 	}
-	// A signature that verifies says the gateway minted this token, not that
-	// the token is still good. Revoking a key used to stop the key and leave
-	// its tokens working for the rest of their lifetime.
-	denied, err := s.revocations.Denies(&claims, s.revocationSubjectKeys(claims.Sub))
-	if err != nil {
-		return nil, err
-	}
-	if denied {
-		// A device revoked is told so, with its revocation, rather than as
-		// a token revoked: the client's next move differs (DEVICE_REVOKED).
-		if s.revocations.DeniesDevice(claims.Did) {
-			return nil, &DeviceTokenRevokedError{Claims: &claims}
-		}
-		return nil, ErrTokenRevoked
-	}
-	// Validate registered claims
+	// Validate registered claims. An expired token is answered as expired
+	// whatever else is true of it: its holder's next move is a refresh, which
+	// says whether the session, or its device, was revoked. A revoked device's
+	// stale tokens, presented for the seven days its list entry lives, so cost
+	// no read of the registry.
 	now := time.Now().Unix()
 	const skew = int64(60) // allow small clock skew ±60s
 	if claims.Nbf != 0 && now+skew < claims.Nbf {
@@ -342,6 +331,22 @@ func (s *Service) ParseAndVerifyJWT(token string) (*JWTClaims, error) {
 	}
 	if claims.Iat != 0 && claims.Iat-skew > now {
 		return nil, errors.New("invalid iat")
+	}
+	// A signature that verifies says the gateway minted this token, not that
+	// the token is still good. Revoking a key used to stop the key and leave
+	// its tokens working for the rest of their lifetime.
+	denied, err := s.revocations.Denies(&claims, s.revocationSubjectKeys(claims.Sub))
+	if err != nil {
+		return nil, err
+	}
+	if denied {
+		// A token refused for its device may be told so, with the device's
+		// revocation, once the registry confirms it (DEVICE_REVOKED): the
+		// client's next move differs from a revoked token's.
+		if s.revocations.DeniesDevice(claims.Namespace, claims.Did) {
+			return nil, &DeviceTokenRevokedError{Claims: &claims}
+		}
+		return nil, ErrTokenRevoked
 	}
 	switch claims.Aud {
 	case AudienceGateway:
