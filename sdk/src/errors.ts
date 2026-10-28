@@ -63,6 +63,9 @@ export class SDKError extends Error {
       if (code === AuthCode.NamespaceMismatch) {
         return new NamespaceError(errorMsg, status, code, details);
       }
+      if (code === FunctionCode.NotDirectlyInvocable) {
+        return new FunctionNotDirectlyInvocableError(errorMsg, status, code, details);
+      }
       return new ScopeError(errorMsg, status, code, details);
     }
     if (status === 404) {
@@ -423,9 +426,35 @@ export const FunctionCode = {
    * owner roll back to make that version current. Not retryable.
    */
   VersionSuperseded: "FUNCTION_VERSION_SUPERSEDED",
+  /**
+   * 403: the function declares `invocable_by` and runs only when one of the
+   * functions it names calls it with `function_invoke` or
+   * `function_invoke_async`. No credential changes that: send the call through
+   * the function it names (an app's router). Raised as
+   * `FunctionNotDirectlyInvocableError`. Not retryable.
+   */
+  NotDirectlyInvocable: "FUNCTION_NOT_DIRECTLY_INVOCABLE",
 } as const;
 
 export type FunctionCode = (typeof FunctionCode)[keyof typeof FunctionCode];
+
+/**
+ * The function may not be invoked directly: it declares `invocable_by`, and
+ * only the functions it names may call it. It is not a `ScopeError`, because
+ * no grant the caller could ask for opens it; send the call through the
+ * function it names.
+ */
+export class FunctionNotDirectlyInvocableError extends SDKError {
+  constructor(
+    message: string,
+    httpStatus: number = 403,
+    code: string = FunctionCode.NotDirectlyInvocable,
+    details: Record<string, any> = {}
+  ) {
+    super(message, httpStatus, code, details);
+    this.name = "FunctionNotDirectlyInvocableError";
+  }
+}
 
 /**
  * The codes of the relayed-fetch path (`storage.fetchWith`).

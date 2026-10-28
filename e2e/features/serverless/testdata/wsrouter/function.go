@@ -1,7 +1,7 @@
 // Command function is the serverless feature's persistent-socket router
 // (ws_persistent: true; TinyGo builds it reactor-mode). Each frame
-// {"fn","mode","key","count"} is one op: the svcfn function named fn runs its
-// "reads" op (count sequential reads). With mode "sync" the router runs it with
+// {"fn","op","mode","key","count"} is one op: the svcfn function named fn runs
+// op, "reads" (count sequential reads) when absent. With mode "sync" the router runs it with
 // function_invoke and answers with its output; otherwise it hands it to
 // function_invoke_async and the op answers the socket itself.
 package main
@@ -55,6 +55,7 @@ func wsOpen(p, n uint32) uint32 {
 
 type frame struct {
 	Fn    string `json:"fn"`
+	Op    string `json:"op"` // the svcfn op to run; "reads" when absent
 	Mode  string `json:"mode"`
 	Key   string `json:"key"`
 	Count int    `json:"count"`
@@ -68,7 +69,10 @@ func wsFrame(p, n uint32) uint32 {
 		send(map[string]any{"error": "frame is not JSON: " + err.Error()})
 		return 0
 	}
-	op := map[string]any{"op": "reads", "key": f.Key, "count": f.Count}
+	if f.Op == "" {
+		f.Op = "reads"
+	}
+	op := map[string]any{"op": f.Op, "key": f.Key, "count": f.Count}
 	if f.Mode == "sync" {
 		body := encode(op)
 		out := unpack(functionInvoke(ptr(f.Fn), size(f.Fn), ptr(body), size(body)))

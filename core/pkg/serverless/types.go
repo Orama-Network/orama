@@ -300,6 +300,11 @@ type FunctionDefinition struct {
 	// RateLimit is the function's own invoke limits (function.yaml
 	// rate_limit), nil for none. See function_rate_limit.go.
 	RateLimit *FunctionRateLimit `json:"rate_limit,omitempty"`
+
+	// InvocableBy names the functions of the namespace that may invoke this
+	// one (function.yaml invocable_by, feat-971); empty for any caller the
+	// usual rules admit. See function_invocable_by.go.
+	InvocableBy []string `json:"invocable_by,omitempty"`
 }
 
 // DBTriggerConfig defines a database trigger configuration.
@@ -356,6 +361,11 @@ type Function struct {
 	// RateLimit is the function's own invoke limits (function.yaml
 	// rate_limit), nil for none. See function_rate_limit.go.
 	RateLimit *FunctionRateLimit `json:"rate_limit,omitempty"`
+
+	// InvocableBy names the functions of the namespace that may invoke this
+	// one (function.yaml invocable_by, feat-971); empty for any caller the
+	// usual rules admit. See function_invocable_by.go.
+	InvocableBy []string `json:"invocable_by,omitempty"`
 }
 
 // InvocationContext provides context for a function invocation.

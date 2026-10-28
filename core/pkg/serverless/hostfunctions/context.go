@@ -111,6 +111,9 @@ func (h *HostFunctions) FunctionInvoke(ctx context.Context, name string, payload
 		// A gateway-started invocation stays gateway-started down the chain.
 		// A caller-started one never becomes gateway-started.
 		SystemOriginated: cur.SystemOriginated,
+		// The child knows which function called it: one that declares
+		// invocable_by runs only for a parent it names (feat-971).
+		ParentFunction:   cur.FunctionName,
 		CallerIP:         cur.CallerIP,
 		CallerKey:        cur.CallerKey,
 		WSClientID:       cur.WSClientID,
@@ -219,6 +222,7 @@ func (h *HostFunctions) FunctionInvokeAsync(ctx context.Context, name string, pa
 			CallerIsAdmin:     snapshot.CallerIsAdmin,
 			CallerHasInvoke:   snapshot.CallerHasInvoke,
 			SystemOriginated:  snapshot.SystemOriginated,
+			ParentFunction:    snapshot.FunctionName,
 			CallerIP:          snapshot.CallerIP,
 			CallerKey:         snapshot.CallerKey,
 			WSClientID:        snapshot.WSClientID,

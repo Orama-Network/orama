@@ -11,6 +11,7 @@ import (
 
 	"github.com/Orama-Network/orama/core/pkg/gateway/auth"
 	"github.com/Orama-Network/orama/core/pkg/gateway/wssession"
+	"github.com/Orama-Network/orama/core/pkg/httputil"
 	"github.com/Orama-Network/orama/core/pkg/serverless"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -103,6 +104,15 @@ func (h *ServerlessHandlers) HandleWebSocket(w http.ResponseWriter, r *http.Requ
 
 	// Look up the function once to decide which execution model to use.
 	fn, lookupErr := h.registry.Get(r.Context(), namespace, name, version)
+	// A function that declares invocable_by is refused to a client on both
+	// models, before the upgrade (feat-971): every frame of a stateless socket
+	// would be refused by the invoker, and a persistent one never reaches it.
+	if lookupErr == nil && fn != nil {
+		if err := serverless.RefuseClientInvocation(fn, h.getCallerIsAdminFromRequest(r)); err != nil {
+			writeRPCError(w, http.StatusForbidden, httputil.ErrCodeFunctionNotDirectlyInvocable, err.Error())
+			return
+		}
+	}
 	if lookupErr == nil && fn != nil && fn.WSPersistent {
 		// The persistent path builds its InvocationContext directly and never
 		// reaches Invoke, so the authorization that the stateless path gets

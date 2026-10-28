@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   AuthCode,
   AuthError,
+  FunctionCode,
+  FunctionNotDirectlyInvocableError,
   NetworkError,
   NotFoundError,
   RevokedCredentialError,
@@ -50,6 +52,19 @@ describe('SDKError.fromResponse', () => {
     const error = SDKError.fromResponse(403, { error: 'nope' });
     expect(error).toBeInstanceOf(ScopeError);
     expect(error).toBeInstanceOf(SDKError);
+  });
+
+  // feat-971: a function only its parents may invoke is refused by name; no
+  // grant opens it, so it is not a ScopeError.
+  it('returns a FunctionNotDirectlyInvocableError for 403 FUNCTION_NOT_DIRECTLY_INVOCABLE', () => {
+    const error = SDKError.fromResponse(403, {
+      ok: false,
+      error: { code: 'FUNCTION_NOT_DIRECTLY_INVOCABLE', message: 'runs only when rpc-router calls it', retryable: false },
+    });
+    expect(error).toBeInstanceOf(FunctionNotDirectlyInvocableError);
+    expect(error).not.toBeInstanceOf(ScopeError);
+    expect(error.code).toBe(FunctionCode.NotDirectlyInvocable);
+    expect(error.retryable).toBe(false);
   });
 
   it('returns a NotFoundError for 404', () => {

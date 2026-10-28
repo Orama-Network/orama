@@ -13,6 +13,9 @@ func getCallerJWTSubject() uint64
 //go:wasmimport env get_caller_device_id
 func getCallerDeviceID() uint64
 
+//go:wasmimport env get_caller_attestation_verdict
+func getCallerAttestationVerdict() uint64
+
 //go:wasmimport env get_request_id
 func getRequestID() uint64
 

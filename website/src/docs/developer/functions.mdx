@@ -93,6 +93,12 @@ rate_limit:             # Optional. The function's own invoke limits, on top of
                         # (30s, 1m, 1h). Out of range is refused at deploy
                         # 400 VALIDATION_FAILED naming the field. A redeploy
                         # changes the limits from the next call.
+invocable_by:           # Optional. The functions of the namespace that may
+  - rpc-router          # invoke this one (function_invoke or
+                        # function_invoke_async); a client invoking it directly
+                        # is refused 403 FUNCTION_NOT_DIRECTLY_INVOCABLE (see
+                        # "Invocable by" below). Empty (default): any caller
+                        # public/private admits.
 ```
 
 ### function.go
@@ -794,7 +800,7 @@ node's log.
 | `get_ws_client_id()` → string | The WebSocket client ID of the current invocation, or empty when the function was not invoked over a WebSocket. |
 | `ws_send(clientID, data)` | Send data to one WebSocket client. |
 | `ws_broadcast(topic, data)` | Send data to every WebSocket client subscribed to a topic. |
-| `function_invoke(name, payload)` → bytes | Invoke another function of the same namespace and wait for its output. The target inherits the caller's identity. |
+| `function_invoke(name, payload)` → bytes | Invoke another function of the same namespace and wait for its output. The target inherits the caller's identity and learns which function called it, so a target that declares `invocable_by` runs only for a parent it names (see [Invocable by](#invocable-by)). |
 | `function_invoke_async(name, payload)` | Start another function and return at once. The call fails only when it cannot be accepted (no invoker, or the in-flight cap is reached); failures inside the target surface in the target's own logs or `ws_send`. |
 | `function_invoke_last_error()` → string | Why this invocation's last `function_invoke` or `function_invoke_async` call failed, as JSON `{"error","code"}`; empty when that call succeeded or none was made. `function_invoke` returns empty both for a target with no output and for a failure, so call this after an empty return. `code` is `AUTH_FORBIDDEN` (the caller may not invoke the target: a misconfiguration, never retry), `NOT_FOUND` (no such function or version), `INVALID_ARGUMENT` (the name or payload could not be read, or is too large), `RATE_LIMITED` (refused before it ran: retry later), `UNAVAILABLE` (the target could not be loaded or the gateway is at its async cap: it did not run, retry), `DEADLINE_EXCEEDED` (the target ran and was stopped: what it did may have happened) or `INTERNAL` (anything else, the target's own failure included: read `error`). For `function_invoke_async` it reports only whether the call was accepted. The value belongs to the invocation (one callback of a persistent WebSocket function): a new invocation always starts empty, so it never reports another request's call. Signature `() → i64`, the packed `ptr<<32 \| len`. Requires gateway 0.3.5 or later on every node of the namespace, for the same reason as `cache_delete`. |
 | `db_query_batch(opsJSON)` | Several reads in one round trip, with an optional `consistency` (see Database Transactions). |
@@ -1153,6 +1159,56 @@ each of them: a namespace served by three gateways that needs at most n in all
 declares n / 3. A caller that sends 100 invokes at 30 a second from one wallet
 spends the 60-invoke burst in about two seconds and then gets 429s at the
 10-a-second refill (the `per_wallet` scope).
+
+### Invocable by
+
+An app that sends every call through one router function, which checks each
+request (the device is still on the account, the build is recent enough) before
+it forwards it, needs the functions behind the router to be unreachable any
+other way. `invocable_by` in function.yaml names the functions that may invoke
+this one:
+
+```yaml
+name: send-message
+invocable_by: [rpc-router]
+```
+
+- **A client is refused on every route**: `POST /v1/functions/{name}/invoke`,
+  `POST /v1/invoke/{namespace}/{name}` and `/v1/functions/{name}/ws` (refused
+  before the upgrade) answer `403 FUNCTION_NOT_DIRECTLY_INVOCABLE`, not
+  retryable, whatever the caller's session or key holds.
+- **A function it names reaches it** with `function_invoke` or
+  `function_invoke_async`, from a stateless invocation or a persistent socket.
+  The call is still the caller's: the child reads the same
+  `get_caller_wallet`, `get_caller_jwt_subject`, `get_caller_device_id`,
+  `get_caller_attestation` and `get_caller_attestation_verdict` as the router,
+  inherits its WebSocket client id, and the caller still needs what the
+  child's `public` setting asks (a private child needs a signed-in wallet or
+  the invoke grant).
+- **Any other function of the namespace is refused** the same way; its
+  `function_invoke_last_error` is `AUTH_FORBIDDEN` with an error naming the
+  allowed parents. The function's calls to itself are admitted.
+- **Triggers and admins are not refused**, as for `internal`: a cron or pub/sub
+  trigger, the JWT claims provider, and an admin caller, with the chains each
+  of them starts.
+
+Only the direct parent counts: if the router calls `a` and `a` calls `b`, then
+`b` names `a`. Parents are matched by name, so redeploying or rolling back the
+router keeps its access. At deploy, each name must be a function of the
+namespace (active or disabled), so deploy the router first; a name that is not
+a function name, the function's own name, a repeat, more than 16 names, or
+`invocable_by` on an `internal`, `ws_persistent` or `ws_auth: capability`
+function is refused `400 VALIDATION_FAILED` naming `invocable_by`. Deleting a
+parent later leaves its name in the list, so nothing but triggers and admins
+reaches the child until a function of that name is deployed again or the child
+is redeployed without it. The list is part of the version, like every other
+function.yaml setting. `orama function list` shows it in the `INVOCABLE BY`
+column and `orama function get` as `invocable_by`.
+
+The check reads the function row the invocation already fetches, so it adds no
+database call. It holds once every gateway of the namespace runs a release that
+has it (0.3.12 or later): during a rolling upgrade a gateway still on an older
+release does not read the field and admits a direct call.
 
 ## WebSockets
 

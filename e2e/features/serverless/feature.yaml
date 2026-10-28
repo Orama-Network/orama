@@ -17,7 +17,9 @@
 # ephemeral state limits, TTL and disconnect), the socket registry, cron
 # fired once per slot across gateways, the pubsub depth limit, and (bug-963)
 # a persistent socket's frame order against function_invoke_async
-# (testdata/wsrouter), where an invocation record says its duration went,
+# (testdata/wsrouter), invocable_by (feat-971: a user refused on both invoke
+# routes and the socket, the named routers reaching the function with the
+# caller's context, deploy refusals), where an invocation record says its duration went,
 # and a deploy's first call on every gateway reading compiled code.
 # Needs tinygo on the runner's PATH (otherwise not applicable, not covered).
 # anon_fetch with Tor down is in anon-tor-chaos.
@@ -94,4 +96,8 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/18-cache.md#what-each-attacker-can-do: WASM concurrency has a per-namespace slot"
     - "website/src/docs/developer/functions.mdx#frame-order-on-a-persistent-socket: the frames of one persistent socket run one at a time in arrival order, so ops run with function_invoke answer in order after their sum; the same ops handed to function_invoke_async overlap and the last answers well before it"
     - "website/src/docs/developer/functions.mdx#invocation-logging: every invocation record names the node that ran it and its database calls, with queue, load and database time inside the duration"
+    - "website/src/docs/developer/functions.mdx#invocable-by: with invocable_by set, a user session is refused 403 FUNCTION_NOT_DIRECTLY_INVOCABLE on POST /v1/functions/{name}/invoke, POST /v1/invoke/{namespace}/{name} and /v1/functions/{name}/ws; an admin still invokes it"
+    - "website/src/docs/developer/functions.mdx#invocable-by: a function invocable_by names reaches it with function_invoke from a stateless and a persistent invocation and with function_invoke_async, and the child sees the caller's wallet, subject, device and attestation verdict unchanged; a function it does not name is refused AUTH_FORBIDDEN"
+    - "website/src/docs/developer/functions.mdx#invocable-by: a parent the namespace does not have, or the function's own name, is refused at deploy naming invocable_by"
+    - "website/src/docs/developer/functions.mdx#invocable-by: orama function list shows invocable_by in INVOCABLE BY and orama function get as invocable_by"
     - "website/src/docs/developer/functions.mdx#invocation-logging: a namespace gateway compiles a deployed function ahead of its first call, so that call on every gateway loads it in milliseconds"

@@ -96,6 +96,7 @@ export {
   NamespaceError,
   AuthCode,
   FunctionCode,
+  FunctionNotDirectlyInvocableError,
   RelayError,
   FetchCapError,
   LogoutError,

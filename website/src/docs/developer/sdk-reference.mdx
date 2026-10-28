@@ -350,11 +350,12 @@ Every failure is an `SDKError`.
 | `ScopeError` | 403: the credential's grants do not cover the operation | `requiredScope` |
 | `NamespaceError` | 403 `NAMESPACE_MISMATCH`: wrong gateway, or the key came from the wrong environment | `namespace`, `credentialNamespace` |
 | `AttestationError` | An attestation code (`ATTESTATION_*`, `APP_UPDATE_REQUIRED`), whatever the status: the device has not attested, its proof was refused, the build is too old, or an attest call could not be served | |
+| `FunctionNotDirectlyInvocableError` | 403 `FUNCTION_NOT_DIRECTLY_INVOCABLE`: the function declares `invocable_by` and runs only when a function it names calls it ([Invocable by](/docs/developer/functions#invocable-by)); no grant opens it, so call the router instead. Not retryable | |
 | `NotFoundError` | 404 | |
 | `NetworkError` | No HTTP response. `httpStatus` is 0 | `code` is `NETWORK_ERROR`, `TIMEOUT` or `ABORTED` |
 | `LogoutError` | `logout` cleared the device's session but the gateway did not end it | `serverError` |
 
-`error.code` is the gateway's own (full list in [Sign-in and sessions](/docs/developer/sign-in#error-codes)); `FunctionCode` names the codes a function invoke fails with (`RATE_LIMITED`, `FUNCTION_TIMEOUT`, `FUNCTION_UNAVAILABLE`, `FUNCTION_EXECUTION_FAILED`, `FUNCTION_VERSION_SUPERSEDED`). `error.retryable` is `true` or `false` when the gateway says, otherwise `undefined`. `Scope` and `Role` are exported types, so a grant name that does not exist is a compile error.
+`error.code` is the gateway's own (full list in [Sign-in and sessions](/docs/developer/sign-in#error-codes)); `FunctionCode` names the codes a function invoke fails with (`RATE_LIMITED`, `FUNCTION_TIMEOUT`, `FUNCTION_UNAVAILABLE`, `FUNCTION_EXECUTION_FAILED`, `FUNCTION_VERSION_SUPERSEDED`, `FUNCTION_NOT_DIRECTLY_INVOCABLE`). `error.retryable` is `true` or `false` when the gateway says, otherwise `undefined`. `Scope` and `Role` are exported types, so a grant name that does not exist is a compile error.
 
 ```ts
 import { NetworkError, ScopeError } from "@orama-network/orama";

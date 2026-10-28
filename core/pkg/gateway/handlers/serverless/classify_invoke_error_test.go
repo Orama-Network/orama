@@ -81,6 +81,15 @@ func TestClassifyInvokeError(t *testing.T) {
 			wantRetryable: false,
 		},
 		{
+			// feat-971: a refusal no credential changes is 403 by name,
+			// never the 401 every other unauthorized answers.
+			name:          "a function only its parents may invoke is 403 FUNCTION_NOT_DIRECTLY_INVOCABLE",
+			err:           serverless.RefuseClientInvocation(&serverless.Function{Name: "send-message", InvocableBy: []string{"rpc-router"}}, false),
+			wantStatus:    http.StatusForbidden,
+			wantCode:      httputil.ErrCodeFunctionNotDirectlyInvocable,
+			wantRetryable: false,
+		},
+		{
 			name:          "generic function error is non-retryable FUNCTION_EXECUTION_FAILED",
 			err:           errors.New("panic: index out of range"),
 			wantStatus:    http.StatusInternalServerError,

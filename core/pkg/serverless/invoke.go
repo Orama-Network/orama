@@ -125,6 +125,13 @@ type InvokeRequest struct {
 	// and can be copied onto it; it is set here, by the gateway-internal
 	// dispatcher that has the authority, and by nothing that reads a request.
 	SystemOriginated bool `json:"-"`
+
+	// ParentFunction is the function whose function_invoke or
+	// function_invoke_async made this call, "" for a call from anything else.
+	// A function that declares invocable_by runs only for a parent it names
+	// (feat-971). Like SystemOriginated it is set by the host functions, from
+	// the parent's own invocation context, and by nothing that reads a request.
+	ParentFunction string `json:"-"`
 }
 
 // InvokeResponse contains the result of a function invocation.
@@ -185,6 +192,18 @@ func (i *Invoker) Invoke(ctx context.Context, req *InvokeRequest) (*InvokeRespon
 	// from a system-triggered parent was given a trigger type that counted as
 	// system — so the authority to skip the check travelled with the work as
 	// an ordinary field.
+	//
+	// A function that declares invocable_by is first refused to everything
+	// but the parents it names (feat-971); a named parent's call is then
+	// still the caller's, checked below like any other.
+	if err := authorizeParent(fn, req); err != nil {
+		return &InvokeResponse{
+			RequestID:  requestID,
+			Status:     InvocationStatusError,
+			Error:      err.Error(),
+			DurationMS: time.Since(startTime).Milliseconds(),
+		}, err
+	}
 	if !req.SystemOriginated && !capabilityOpens(fn, req) &&
 		!canInvokeFn(fn, req.CallerWallet, req.CallerIsAdmin, req.CallerHasInvoke) {
 		// Authorization uses the function we already fetched above —

@@ -39,6 +39,10 @@ func classifyInvokeError(err error) (int, httputil.RPCErrorCode, bool) {
 		return http.StatusNotFound, httputil.ErrCodeNotFound, false
 	case serverless.IsResourceExhausted(err):
 		return http.StatusTooManyRequests, httputil.ErrCodeRateLimited, true
+	case errors.Is(err, serverless.ErrFunctionNotDirectlyInvocable):
+		// Before IsUnauthorized, which it also answers: no credential the
+		// caller could present changes it, so it is never a 401.
+		return http.StatusForbidden, httputil.ErrCodeFunctionNotDirectlyInvocable, false
 	case serverless.IsUnauthorized(err):
 		return http.StatusUnauthorized, httputil.ErrCodeUnauthorized, false
 	default:

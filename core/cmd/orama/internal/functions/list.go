@@ -2,6 +2,7 @@ package functions
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Orama-Network/orama/core/cmd/orama/internal/printer"
 	"github.com/spf13/cobra"
@@ -65,10 +66,11 @@ func runList(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("%dMB", valNum(fn, "memory_limit_mb")),
 			fmt.Sprintf("%ds", valNum(fn, "timeout_seconds")),
 			publicStr,
+			invocableBy(fn),
 		})
 	}
 
-	if err := out.Table([]string{"NAME", "VERSION", "STATUS", "MEMORY", "TIMEOUT", "PUBLIC"}, rows); err != nil {
+	if err := out.Table([]string{"NAME", "VERSION", "STATUS", "MEMORY", "TIMEOUT", "PUBLIC", "INVOCABLE BY"}, rows); err != nil {
 		return err
 	}
 	out.Printf("\nTotal: %d function(s)\n", len(functions))
@@ -96,6 +98,20 @@ func printAllVersions(out *printer.Printer, functions []interface{}) error {
 	}
 	out.Printf("\nTotal: %d version(s)\n", len(functions))
 	return nil
+}
+
+// invocableBy is the functions a function admits as its callers
+// (invocable_by), comma-separated, or "-" when any caller may invoke it.
+func invocableBy(fn map[string]interface{}) string {
+	names, _ := fn["invocable_by"].([]interface{})
+	if len(names) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%v", n))
+	}
+	return strings.Join(parts, ",")
 }
 
 func valStr(m map[string]interface{}, key string) string {

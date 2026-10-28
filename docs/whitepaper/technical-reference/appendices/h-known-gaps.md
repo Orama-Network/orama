@@ -366,6 +366,7 @@ From [Serverless functions](../vol1/21-serverless.md#known-gaps).
 - **Socket writes are not serialized.** The handlers write replies with `conn.WriteMessage` while `WSManager.Send` writes under its own lock, so a `ws_send` can interleave with a reply (`core/pkg/serverless/websocket.go:Send`).
 - **Persistent instances leak guest allocations.** `callExport` and `WriteToGuest` never free, and persistent and reactor modules have only the runtime-wide 256 MB cap (`core/pkg/serverless/persistent/instance.go:callExport`).
 - **The 300 s timeout appears in the CLI and the proxy message.** The gateway refuses above 60 s (`core/cmd/orama/internal/functions/helpers.go:LoadConfig`, `core/pkg/gateway/middleware.go:proxyTimeoutMessage`).
+- **`invocable_by` is not enforced by an older gateway.** A gateway on a release before migration 097 neither reads nor checks the column, so during a rolling upgrade a direct call that reaches one is admitted. The restriction holds once every gateway of the namespace runs a release that has it.
 - **Deploy is not atomic, and pins outlive versions.** A gateway that dies between the version insert and the trigger hand-over leaves a version without its triggers or environment (`core/pkg/serverless/registry.go:Register`), and nothing unpins the CID of a pruned, deleted or purged version.
 
 ## 22. Push notifications
