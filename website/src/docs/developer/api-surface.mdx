@@ -47,7 +47,7 @@ The request and response shapes of the `SDK` routes are pinned by the fixtures i
 | `/v1/attest/challenge` | direct | A single-use, five-minute challenge for the calling session's device. |
 | `/v1/attest/ios` | direct | An App Attest attestation over `SHA-256(challenge ‖ did)`; answers a token carrying the attestation. |
 | `/v1/auth/devices` | SDK | The calling account's devices, revoked ones included. `auth.listDevices()`. |
-| `/v1/auth/devices/` | SDK | `DELETE /v1/auth/devices/{id}` revokes one device — its sessions, access tokens and sockets — and nothing else; `POST /v1/auth/devices/approve` approves a device link from the calling device. `auth.revokeDevice()`, `auth.approveDeviceLink()`. |
+| `/v1/auth/devices/` | SDK | `DELETE /v1/auth/devices/{id}` revokes one device — its sessions, access tokens and sockets — and nothing else, keeping the revoker's proof and optional `evidence` for the revoked device's `DEVICE_REVOKED`; `POST /v1/auth/devices/approve` approves a device link from the calling device. `auth.revokeDevice()`, `auth.approveDeviceLink()`. |
 | `/v1/auth/token` | direct | Exchange an API key for a JWT. A server-side concern; the SDK sends the key itself. |
 | `/v1/auth/verify` | SDK | `auth.verify()` |
 | `/v1/auth/whoami` | SDK | `auth.whoami()`. A device-bound session's answer carries `device_id` and `device_state`; a pending device's carries `grants: []`. |

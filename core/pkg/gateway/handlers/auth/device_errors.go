@@ -33,7 +33,8 @@ const (
 	// around the gateway's clock. The answer's server_time is the gateway's
 	// time, in unix seconds.
 	ErrCodeDeviceProofClockSkew = "DEVICE_PROOF_CLOCK_SKEW"
-	// ErrCodeDeviceRevoked: the device was revoked. Its key is done.
+	// ErrCodeDeviceRevoked: the device presenting itself was revoked. Its key
+	// is done. The answer's revocation is who revoked it and what proves it.
 	ErrCodeDeviceRevoked = "DEVICE_REVOKED"
 	// ErrCodeDevicePending: the device waits for another device's approval.
 	ErrCodeDevicePending = "DEVICE_PENDING"
@@ -129,6 +130,13 @@ func writeDeviceRefusal(w http.ResponseWriter, err error) bool {
 		// answer says what this gateway's clock reads.
 		if errors.Is(err, authsvc.ErrDeviceProofClockSkew) {
 			body["server_time"] = time.Now().Unix()
+		}
+		// A revoked device is shown its revocation: who revoked it and what
+		// proves it, for the client to check with keys it already trusts
+		// before it acts on the refusal (authsvc.DeviceRevocationRecord).
+		var revoked *authsvc.DeviceRevokedError
+		if errors.As(err, &revoked) {
+			body["revocation"] = revoked.Revocation
 		}
 		writeJSON(w, candidate.refusal.status, body)
 		return true

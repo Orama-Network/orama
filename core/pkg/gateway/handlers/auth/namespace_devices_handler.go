@@ -11,7 +11,7 @@ import (
 // cannot help themselves.
 //
 // GET    /v1/namespace/devices?subject=<wallet>  an account's devices
-// DELETE /v1/namespace/devices/{id}              revoke one of them
+// DELETE /v1/namespace/devices/{id}              revoke one of them ({"evidence"} optional)
 //
 // Under the approval policy an account that lost its only device, or whose
 // stolen device revoked the others, has nothing left that can approve a new
@@ -61,10 +61,21 @@ func (h *Handlers) NamespaceDeviceByIDHandler(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusMethodNotAllowed, "DELETE /v1/namespace/devices/{id}, with an id from GET /v1/namespace/devices")
 		return
 	}
+	// The operator's body may carry evidence for the application. A device
+	// proof means nothing here: the operator is no device of the account.
+	req, ok := readRevokeRequest(w, r)
+	if !ok {
+		return
+	}
+	if req.DeviceProof != nil {
+		writeError(w, http.StatusBadRequest, "an operator's revocation carries no device_proof; send {\"evidence\": \"...\"} or no body")
+		return
+	}
 	namespace := h.callerNamespace(r)
 	device, err := h.authService.Device(r.Context(), namespace, id)
 	if err == nil {
-		err = h.authService.RevokeDevice(r.Context(), namespace, device.Subject, id)
+		err = h.authService.RevokeDevice(r.Context(), namespace, device.Subject, id,
+			authsvc.DeviceRevocation{By: authsvc.RevokedByOperator, Evidence: req.Evidence})
 	}
 	if err != nil {
 		if !writeDeviceRefusal(w, err) {

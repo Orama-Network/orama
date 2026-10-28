@@ -84,6 +84,46 @@ DELETE /v1/namespace/devices/{id}               revoke one of them
 
 With no active device left, the user's next sign-in enrols its device as the account's first again.
 
+### What a revoked device is told
+
+An application may erase a device that is told `DEVICE_REVOKED`: its data, session and keys. So that a misbehaving gateway cannot erase a healthy device by saying so, every `DEVICE_REVOKED` answer carries `revocation`, which the client checks with keys it already trusts before it acts:
+
+```json
+{
+  "code": "DEVICE_REVOKED",
+  "revocation": {
+    "device_id": "<the revoked device: compare it with your own id>",
+    "revoked_at": "2026-10-28T10:00:00Z",
+    "revoked_by": "device",
+    "proof": {
+      "namespace": "anchat",
+      "device_id": "<the revoking device>",
+      "public_key": { "kty": "OKP", "crv": "Ed25519", "x": "..." },
+      "iat": 1793181600,
+      "id": "...",
+      "sig": "..."
+    },
+    "evidence": "<what the revoker attached, verbatim, or null>"
+  }
+}
+```
+
+`revoked_by` is `device` (another of the account's devices, or the device itself, with its revoke proof), `account` (a session bound to no device: the wallet's own, under `optional`), `operator` (`/v1/namespace/devices`), `function` (`deny_device`), or `unrecorded` (revoked before the gateway kept this). Only `device` comes with a `proof`; the others are the gateway's word, with `proof: null`.
+
+To check a proof:
+
+1. `revocation.device_id` is this device's id.
+2. `proof.namespace` is this device's namespace.
+3. `proof.device_id` is the RFC 7638 thumbprint of `proof.public_key`.
+4. `proof.sig` verifies under `proof.public_key` over the device-proof statement for `revoke` whose binding is the revoked device's id: `orama-device-proof-v1`, `revoke`, `proof.namespace`, `revocation.device_id`, `proof.iat`, `proof.id`, joined by newlines.
+5. `proof.device_id` is a device you trust: this device itself, or one your application knows to be the account's. Do not skip this: anyone, a gateway included, can make a key and sign that statement with it.
+
+The proof cannot be shown to another device (it names the revoked one) or carried to another namespace. `iat` is not checked against the clock: a revocation is permanent. The TypeScript SDK does all five: `verifyDeviceRevocation(deviceRevocationOf(err), { deviceId, namespace, trustedDeviceIds })` answers `proven`, `unproven` (`no_proof`, or `untrusted_revoker`) or `invalid`. Act at once on `proven`; on `unproven`, check `evidence` or your own records; treat `invalid` as a gateway that is misbehaving.
+
+**Evidence.** The revoker may attach the application's own proof, such as an account-signed roster entry: `"evidence"` beside `device_proof` on `DELETE /v1/auth/devices/{id}` (`client.auth.revokeDevice(id, { evidence })`), or alone on `DELETE /v1/namespace/devices/{id}`. It is at most 16 KiB of UTF-8 (base64 is a good fit); the gateway stores it with the tombstone and returns it verbatim, and never reads it. Whatever it must bind, the account and the revoked device included, is for your application to put in it and check. A device's tombstone keeps the first revocation's record: revoking it again changes nothing in it. `deny_device` attaches none.
+
+`DEVICE_REVOKED` is only ever about the device presenting itself. Collecting a device link whose approving device has since been revoked answers `access_denied`. A revoked device's access tokens and sockets are refused with `AUTH_REVOKED` and close code 4403, and its refresh token was revoked with it (`401`); the answer that carries `revocation` is its next sign-in.
+
 ## Device policy
 
 `orama namespace session-policy --device-policy <policy>` (or `PUT /v1/namespace/session-policy {"device_policy": …}`; needs namespace write) sets what a sign-in must prove.
@@ -117,7 +157,7 @@ new device                         gateway                   an active device
   | <-- access + refresh, device_id -|                              |
 ```
 
-Starting the link from the new device (`POST /v1/auth/device` with `device_key`) is **seedless linking**: no wallet is involved at all, and the new device takes its account from the device that approves it. Starting it from an approval-policy sign-in is **new-device approval**: the wallet already named the account, and only one of that account's devices may approve. Either way the approver proves it holds its own key over the user code, and collecting the session takes the new device's proof over the device code. The codes alone collect nothing, and the approving device must still be active when the new one collects: revoking a stolen approver reaches the device it let in. A device link cannot be approved with a wallet signature (`orama auth approve`), and a plain login cannot be approved by a device.
+Starting the link from the new device (`POST /v1/auth/device` with `device_key`) is **seedless linking**: no wallet is involved at all, and the new device takes its account from the device that approves it. Starting it from an approval-policy sign-in is **new-device approval**: the wallet already named the account, and only one of that account's devices may approve. Either way the approver proves it holds its own key over the user code, and collecting the session takes the new device's proof over the device code. The codes alone collect nothing, and the approving device must still be active when the new one collects: revoking a stolen approver reaches the device it let in, whose collection then answers `access_denied`. A device link cannot be approved with a wallet signature (`orama auth approve`), and a plain login cannot be approved by a device.
 
 ## Devices admitted by a function
 
@@ -152,7 +192,7 @@ A gateway that predates devices knows nothing of the policy, of device-bound sig
 | `DEVICE_PROOF_REQUIRED` | A device-bound credential was presented without the device's proof (401) |
 | `DEVICE_PROOF_INVALID` | The proof is malformed, reused, or not the device's (401) |
 | `DEVICE_PROOF_CLOCK_SKEW` | The proof's time is more than 60 seconds from the gateway's clock; `server_time` is the gateway's clock (401) |
-| `DEVICE_REVOKED` | The device was revoked; its key can never hold a session again (403) |
+| `DEVICE_REVOKED` | The device presenting itself was revoked; its key can never hold a session again. `revocation` says who revoked it and carries the proof ([What a revoked device is told](#what-a-revoked-device-is-told)) (403) |
 | `DEVICE_PENDING` | The device waits for another of the account's devices to approve it (403, or 202 on sign-in); under `function`, a pending device's refresh after the namespace left the policy |
 | `DEVICE_PENDING_APPROVAL` | The session is a pending device's restricted session and this route or function is not open to it; `device_id` is the device (403) |
 | `DEVICE_NOT_FOUND` | The account has no such device (404) |

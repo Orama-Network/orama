@@ -56,7 +56,7 @@ func TestEnrolFirstOrPendingDevice_onlyTheFirstEverIsActive(t *testing.T) {
 	if second.State != DeviceStatePending {
 		t.Fatalf("a second device is %s, want pending", second.State)
 	}
-	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, first.ID); err != nil {
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, first.ID, byAccount); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, second.ID, "function:test"); err != nil {

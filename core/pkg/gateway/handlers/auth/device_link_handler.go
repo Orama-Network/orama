@@ -69,8 +69,15 @@ func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, pr
 		if err := h.authService.VerifyDeviceProof(ctx, key, authsvc.DeviceProofClaim, claimed.Namespace, deviceCode, proof); err != nil {
 			return err
 		}
+		// The approver's state is no refusal of the device collecting: told
+		// DEVICE_REVOKED or DEVICE_PENDING here, a healthy new device would
+		// take its own key for revoked or pending. The approval is void, which
+		// is RFC 8628's access_denied.
 		if _, err := h.authService.RequireActiveDevice(ctx, claimed.Namespace, claimed.Subject, claimed.ApprovedByDevice); err != nil {
-			return fmt.Errorf("the device that approved this link can no longer approve: %w", err)
+			if authsvc.IsDeviceError(err) {
+				return authsvc.ErrDeviceAccessDenied
+			}
+			return fmt.Errorf("read the device that approved this link: %w", err)
 		}
 		device, err := h.authService.EnrolDevice(ctx, claimed.Namespace, claimed.Subject, key,
 			claimed.DeviceLabel, authsvc.DeviceStateActive, claimed.ApprovedByDevice)

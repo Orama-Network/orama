@@ -1047,6 +1047,9 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `created_at` | TIMESTAMP | yes | `CURRENT_TIMESTAMP` |  |
 | `activated_at` | TIMESTAMP | no | - |  |
 | `revoked_at` | TIMESTAMP | no | - |  |
+| `revoked_by` | TEXT | no | - |  |
+| `revocation_proof` | TEXT | no | - |  |
+| `revocation_evidence` | TEXT | no | - |  |
 
 ## signing_keys
 

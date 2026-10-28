@@ -426,7 +426,7 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 | `DEVICE_PROOF_REQUIRED` | 401 | a device-bound credential was presented without the device's proof |
 | `DEVICE_PROOF_INVALID` | 401 | the proof is malformed, reused, or not the device's |
 | `DEVICE_PROOF_CLOCK_SKEW` | 401 | the proof's time is more than 60 s from the gateway's clock; `server_time` is the gateway's clock (unix seconds) |
-| `DEVICE_REVOKED` | 403 | the device was revoked; its key can never hold a session again |
+| `DEVICE_REVOKED` | 403 | the device presenting itself was revoked; its key can never hold a session again. `revocation` is who revoked it and what proves it ([identity](13-identity.md#revoking-a-device)) |
 | `DEVICE_PENDING` | 403 (202 on sign-in) | the device waits for another of the account's devices to approve it; under the function policy, a pending device's refresh after the namespace left the policy |
 | `DEVICE_PENDING_APPROVAL` | 403 | a pending device's restricted session asked for a route, or a function, not open to it; `device_id` is the device ([a pending device's session](#a-pending-devices-session)) |
 | `DEVICE_NOT_FOUND` | 404 | the account has no such device |

@@ -538,18 +538,25 @@ export class AuthClient {
    * Revoke one of the account's devices: its sessions, access tokens and open
    * sockets end, and its key can never sign in again. The account's other
    * devices stay signed in.
+   *
+   * `evidence` is the application's proof of the revocation (an
+   * account-signed roster entry, for example), at most 16 KiB: the gateway
+   * keeps it with the device's tombstone and shows it, verbatim, in the
+   * revoked device's `DEVICE_REVOKED` refusals (`verifyDeviceRevocation`).
    */
-  async revokeDevice(deviceId: string): Promise<void> {
+  async revokeDevice(deviceId: string, options: { evidence?: string } = {}): Promise<void> {
     // From a device-bound session the device signs the revocation: a lifted
     // access token alone must not sign the account out of its other devices.
+    // The revoked device is shown that signature.
     const path = `/v1/auth/devices/${encodeURIComponent(deviceId)}`;
+    const evidence = options.evidence !== undefined ? { evidence: options.evidence } : {};
     if (!(await this.storage.get(DEVICE_ID_KEY))) {
-      await this.httpClient.request("DELETE", path, { body: {} });
+      await this.httpClient.request("DELETE", path, { body: evidence });
       return;
     }
     const namespace = (await this.storage.get("namespace")) ?? "default";
     await this.sendWithProof("revoke", namespace, deviceId, (device_proof) =>
-      this.httpClient.request("DELETE", path, { body: { device_proof } })
+      this.httpClient.request("DELETE", path, { body: { device_proof, ...evidence } })
     );
   }
 

@@ -119,6 +119,15 @@ export type {
   AppAttestAssertionProvider,
 } from "./auth/attestation";
 export { deviceIdOf, deviceProofMessage, makeDeviceProof, normalizeUserCode } from "./auth/device";
+export { deviceRevocationOf, verifyDeviceRevocation, webCryptoVerify } from "./auth/revocation";
+export type {
+  RevokedBy,
+  DeviceRevocation,
+  DeviceRevocationProof,
+  DeviceRevocationVerdict,
+  RevocationSignatureVerifier,
+  VerifyDeviceRevocationOptions,
+} from "./auth/revocation";
 export type {
   DeviceSigner,
   DeviceProof,

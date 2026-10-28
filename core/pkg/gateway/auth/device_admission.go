@@ -101,7 +101,7 @@ func (s *Service) RequireSessionDevice(ctx context.Context, namespace, subject, 
 	case d.Subject != subject:
 		return nil, ErrDeviceNotFound
 	case d.State == DeviceStateRevoked:
-		return nil, ErrDeviceRevoked
+		return nil, revokedError(d)
 	}
 	return d, nil
 }
@@ -157,9 +157,9 @@ func (s *Service) DenyPendingDevice(ctx context.Context, namespace, subject, id,
 		return err
 	}
 	res, err := s.db.Exec(client.WithInternalAuth(ctx),
-		`UPDATE session_devices SET state = 'revoked', revoked_at = datetime('now')
+		`UPDATE session_devices SET state = 'revoked', revoked_at = datetime('now'), revoked_by = ?
 		  WHERE id = ? AND namespace_id = ? AND subject = ? AND state = 'pending'`,
-		id, nsID, subject)
+		string(RevokedByFunction), id, nsID, subject)
 	if err != nil {
 		return fmt.Errorf("deny device %s: %w", id, err)
 	}

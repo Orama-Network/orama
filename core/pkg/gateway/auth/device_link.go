@@ -72,7 +72,7 @@ func (s *Service) StartDeviceLink(ctx context.Context, namespace, subject string
 		existing, err := s.Device(ctx, namespace, key.ID())
 		switch {
 		case err == nil && existing.State == DeviceStateRevoked:
-			return nil, ErrDeviceRevoked
+			return nil, revokedError(existing)
 		case err != nil && !errors.Is(err, ErrDeviceNotFound):
 			return nil, err
 		}

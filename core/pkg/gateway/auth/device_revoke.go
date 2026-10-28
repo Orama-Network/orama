@@ -24,14 +24,22 @@ import (
 //
 // The account's other devices are untouched: none of them carries this id.
 
-// RevokeDevice revokes one of an account's devices.
+// RevokeDevice revokes one of an account's devices. how is who revokes it and
+// what proves it, kept with the tombstone for the revoked device to be shown
+// (DeviceRevocationRecord).
 //
 // It is safe to repeat. A device already revoked still has its sessions and
 // its revocation-list entry re-asserted, so a revocation that failed half way
-// is finished by trying again rather than refused as already done.
-func (s *Service) RevokeDevice(ctx context.Context, namespace, subject, id string) error {
+// is finished by trying again rather than refused as already done. The
+// tombstone keeps the first revocation's record: a later one cannot replace
+// a device's signed proof with none.
+func (s *Service) RevokeDevice(ctx context.Context, namespace, subject, id string, how DeviceRevocation) error {
 	if s.db == nil {
 		return ErrRotationNotConfigured
+	}
+	by, proof, evidence, err := how.stored()
+	if err != nil {
+		return err
 	}
 	d, err := s.Device(ctx, namespace, id)
 	if err != nil {
@@ -41,8 +49,10 @@ func (s *Service) RevokeDevice(ctx context.Context, namespace, subject, id strin
 		return ErrDeviceNotFound
 	}
 	if _, err := s.db.Exec(client.WithInternalAuth(ctx),
-		`UPDATE session_devices SET state = 'revoked', revoked_at = datetime('now')
-		  WHERE id = ? AND state != 'revoked'`, id); err != nil {
+		`UPDATE session_devices
+		    SET state = 'revoked', revoked_at = datetime('now'),
+		        revoked_by = ?, revocation_proof = ?, revocation_evidence = ?
+		  WHERE id = ? AND state != 'revoked'`, by, proof, evidence, id); err != nil {
 		return fmt.Errorf("tombstone device %s: %w", id, err)
 	}
 	return s.endDeviceSessions(ctx, id)
