@@ -271,12 +271,29 @@ const MaxDeviceIssuedLifetime = 7 * 24 * time.Hour
 // The entry names the namespace (deviceRevocationKey): a device id is a key's
 // thumbprint, and an entry naming the id alone would refuse the same key
 // enrolled in another namespace for up to seven days.
+//
+// It is one row carrying both keys (feat-978: remove the legacy half once no
+// gateway before 0.3.13 is left). Its subject is the legacy "device:<id>",
+// the only column gateways before 0.3.13 match a device on, so they refuse
+// the device at once during a rolling upgrade rather than when its tokens
+// expire. Its jti is the scoped "device:<namespace>:<id>", which no token's
+// jti can be (a token's is random, a capability's starts "cap:"); this
+// gateway reads a row with such a jti as the scoped entry alone
+// (applyRevocation), so the legacy subject does not refuse the key in other
+// namespaces here. One row, so the two cannot be written apart, and its
+// unique jti makes a repeated revocation write nothing.
 func (r *RevocationList) RevokeDevice(ctx context.Context, namespace, deviceID string) error {
 	key := deviceRevocationKey(namespace, deviceID)
 	if key == "" {
 		return fmt.Errorf("cannot revoke a device with no id")
 	}
-	return r.RevokeSubject(ctx, key, "device revoked", MaxDeviceIssuedLifetime)
+	now := r.now()
+	return r.insert(ctx, revocation{
+		jti:          key,
+		subject:      legacyDeviceRevocationKey(deviceID),
+		issuedBefore: now.Unix(),
+		expiresAt:    now.Add(MaxDeviceIssuedLifetime).Unix(),
+	}, "device revoked")
 }
 
 // DeniesDevice reports whether a device of namespace is on the list. A token
@@ -294,9 +311,9 @@ func (r *RevocationList) DeniesDevice(namespace, deviceID string) bool {
 }
 
 // deniesDeviceLocked is DeniesDevice under r.mu. It also honours an entry
-// naming the device id alone (legacyDeviceRevocationKey): gateways before
-// 0.3.13 wrote those, and one written by such a gateway, during a rolling
-// upgrade or before it, lives MaxDeviceIssuedLifetime.
+// naming the device id alone (legacyDeviceRevocationKey, feat-978): gateways
+// before 0.3.13 wrote those, and one written by such a gateway, during a
+// rolling upgrade or before it, lives MaxDeviceIssuedLifetime.
 func (r *RevocationList) deniesDeviceLocked(namespace, deviceID string) bool {
 	for _, key := range []string{deviceRevocationKey(namespace, deviceID), legacyDeviceRevocationKey(deviceID)} {
 		if _, denied := r.bySubject[key]; key != "" && denied {
@@ -317,7 +334,11 @@ func deviceRevocationKey(namespace, deviceID string) string {
 }
 
 // legacyDeviceRevocationKey is the subject gateways before 0.3.13 revoked a
-// device under, "device:<id>", read and never written.
+// device under, "device:<id>". Written only as the subject of the dual row
+// RevokeDevice writes, for those gateways; an entry under it with no scoped
+// jti, which one of them wrote, refuses the device in every namespace
+// (feat-978: drop both once no gateway before 0.3.13 is left and the last
+// such entry has expired).
 func legacyDeviceRevocationKey(deviceID string) string {
 	return bindingRevocationKey(deviceRevocationPrefix, deviceID)
 }
@@ -437,12 +458,23 @@ func (r *RevocationList) applyLocal(rev revocation) {
 
 // apply puts one revocation into the maps. The caller holds r.mu.
 func (r *RevocationList) apply(rev revocation) {
-	if rev.jti != "" {
-		r.byJTI[rev.jti] = rev.expiresAt
+	applyRevocation(r.byJTI, r.bySubject, rev)
+}
+
+// applyRevocation puts one revocation into byJTI and bySubject. A row whose
+// jti is a scoped device key is RevokeDevice's dual row: it is that scoped
+// entry and nothing else here, its legacy subject being for gateways before
+// 0.3.13 (feat-978).
+func applyRevocation(byJTI, bySubject map[string]int64, rev revocation) {
+	subject := strings.ToLower(strings.TrimSpace(rev.subject))
+	if strings.HasPrefix(rev.jti, deviceRevocationPrefix) {
+		subject = rev.jti
+	} else if rev.jti != "" {
+		byJTI[rev.jti] = rev.expiresAt
 	}
-	if rev.subject != "" {
-		if existing, ok := r.bySubject[rev.subject]; !ok || rev.issuedBefore > existing {
-			r.bySubject[rev.subject] = rev.issuedBefore
+	if subject != "" {
+		if existing, ok := bySubject[subject]; !ok || rev.issuedBefore > existing {
+			bySubject[subject] = rev.issuedBefore
 		}
 	}
 }
@@ -656,18 +688,12 @@ func readRevocations(ctx context.Context, db client.DatabaseClient, started time
 		}
 		jti, _ := row[0].(string)
 		subject, _ := row[1].(string)
-		issuedBefore := toInt64(row[2])
-		expiresAt := toInt64(row[3])
-
-		if jti != "" {
-			read.byJTI[jti] = expiresAt
-		}
-		if subject != "" {
-			subject = strings.ToLower(strings.TrimSpace(subject))
-			if existing, ok := read.bySubject[subject]; !ok || issuedBefore > existing {
-				read.bySubject[subject] = issuedBefore
-			}
-		}
+		applyRevocation(read.byJTI, read.bySubject, revocation{
+			jti:          jti,
+			subject:      subject,
+			issuedBefore: toInt64(row[2]),
+			expiresAt:    toInt64(row[3]),
+		})
 	}
 	return read
 }

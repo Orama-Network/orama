@@ -240,3 +240,50 @@ func TestRevocationList_honoursAnUnscopedDeviceEntry(t *testing.T) {
 		t.Error("an unscoped entry is not reported as the device's")
 	}
 }
+
+// feat-976 review: during a rolling upgrade a gateway before 0.3.13 matches a
+// device only on the subject "device:<id>", so a device revoked through a
+// newer gateway kept working on the older ones until its tokens expired.
+// RevokeDevice writes one row carrying both keys: the legacy subject, for
+// them, and the scoped key as its jti, which a newer gateway reloading the
+// list reads as the device's entry in its own namespace only (feat-978).
+func TestRevokeDevice_writesTheLegacyEntryForOlderGateways(t *testing.T) {
+	s, db := serviceWithRevocations(t)
+	ctx := context.Background()
+	const id = "kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"
+	if err := s.revocations.RevokeDevice(ctx, "AnChat", id); err != nil {
+		t.Fatal(err)
+	}
+	db.mu.Lock()
+	rows := append([]revocation(nil), db.rows...)
+	db.mu.Unlock()
+	if len(rows) != 1 {
+		t.Fatalf("revoking a device wrote %d rows, want one carrying both keys: %+v", len(rows), rows)
+	}
+	if want := strings.ToLower("device:" + id); rows[0].subject != want {
+		t.Errorf("subject = %q, want the legacy %q a gateway before 0.3.13 matches on", rows[0].subject, want)
+	}
+	if want := strings.ToLower("device:anchat:" + id); rows[0].jti != want {
+		t.Errorf("jti = %q, want the scoped %q", rows[0].jti, want)
+	}
+
+	// Another gateway of this release, reading the row from the registry.
+	reloaded := NewRevocationList(registryOf(&revocationNet{db: db}), nil)
+	if err := reloaded.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour).Unix()
+	denies := func(namespace string) bool {
+		denied, err := reloaded.Denies(&JWTClaims{Sub: "0xa", Namespace: namespace, Did: id, Iat: later}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return denied
+	}
+	if !denies("anchat") || !reloaded.DeniesDevice("anchat", id) {
+		t.Error("a reloaded list does not refuse the revoked device in its namespace")
+	}
+	if denies("other") || reloaded.DeniesDevice("other", id) {
+		t.Error("the legacy half of the row refuses the same key in another namespace on this release")
+	}
+}
