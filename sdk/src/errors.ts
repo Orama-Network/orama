@@ -66,6 +66,9 @@ export class SDKError extends Error {
       if (code === FunctionCode.NotDirectlyInvocable) {
         return new FunctionNotDirectlyInvocableError(errorMsg, status, code, details);
       }
+      if (code === AuthCode.DeviceRevoked) {
+        return new RevokedDeviceError(errorMsg, status, code, details);
+      }
       return new ScopeError(errorMsg, status, code, details);
     }
     if (status === 404) {
@@ -116,7 +119,11 @@ export const AuthCode = {
   Missing: "AUTH_MISSING",
   /** A credential was presented and is not one this cluster knows. */
   InvalidKey: "AUTH_INVALID_KEY",
-  /** The credential or session was revoked. Sign in again. */
+  /**
+   * The credential or session was revoked: the token, its session, the key it
+   * came from, or every session of its account. Sign in again. A token
+   * refused because its device was revoked is `DEVICE_REVOKED` instead.
+   */
   Revoked: "AUTH_REVOKED",
   /** The credential expired. Refresh, or sign in again. */
   Expired: "AUTH_EXPIRED",
@@ -190,7 +197,13 @@ export const AuthCode = {
    * rather than signing them out.
    */
   DeviceProofClockSkew: "DEVICE_PROOF_CLOCK_SKEW",
-  /** The device was revoked; its key can never hold a session again. */
+  /**
+   * The device was revoked; its key can never hold a session again. Sign-in,
+   * refresh, and any request or WebSocket upgrade with a token bound to it
+   * answer it (403), with `details.revocation`: who revoked it and what proves
+   * it. Check it with `verifyDeviceRevocation` before acting on it. A revoked
+   * token, session, key or account is `AUTH_REVOKED` instead.
+   */
   DeviceRevoked: "DEVICE_REVOKED",
   /** The device waits for another of the account's devices to approve it. */
   DevicePending: "DEVICE_PENDING",
@@ -409,6 +422,25 @@ export class RevokedCredentialError extends AuthError {
   ) {
     super(message, httpStatus, code, details);
     this.name = "RevokedCredentialError";
+  }
+}
+
+/**
+ * 403 `DEVICE_REVOKED`: the device this client signs in as was revoked, and
+ * can never hold a session again. Not a missing grant: renewing or asking for
+ * more scopes cannot fix it. `details.revocation` says who revoked it and what
+ * proves it; check it with `verifyDeviceRevocation(deviceRevocationOf(err), …)`
+ * before erasing anything.
+ */
+export class RevokedDeviceError extends SDKError {
+  constructor(
+    message: string,
+    httpStatus: number = 403,
+    code: string = AuthCode.DeviceRevoked,
+    details: Record<string, any> = {}
+  ) {
+    super(message, httpStatus, code, details);
+    this.name = "RevokedDeviceError";
   }
 }
 

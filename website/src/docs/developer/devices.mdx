@@ -108,7 +108,7 @@ An application may erase a device that is told `DEVICE_REVOKED`: its data, sessi
 }
 ```
 
-`revoked_by` is `device` (another of the account's devices, or the device itself, with its revoke proof), `account` (a session bound to no device: the wallet's own, under `optional`), `operator` (`/v1/namespace/devices`), `function` (`deny_device`), or `unrecorded` (revoked before the gateway kept this). Only `device` comes with a `proof`; the others are the gateway's word, with `proof: null`.
+`revoked_by` is `device` (another of the account's devices, or the device itself, with its revoke proof), `account` (a session bound to no device: the wallet's own, under `optional`), `operator` (`/v1/namespace/devices`), `function` (`deny_device`, `deny_device_with_evidence`), or `unrecorded` (revoked before the gateway kept this, or a device whose record this gateway no longer holds). Only `device` comes with a `proof`; the others are the gateway's word, with `proof: null`.
 
 To check a proof:
 
@@ -120,9 +120,24 @@ To check a proof:
 
 The proof cannot be shown to another device (it names the revoked one) or carried to another namespace. `iat` is not checked against the clock: a revocation is permanent. The TypeScript SDK does all five: `verifyDeviceRevocation(deviceRevocationOf(err), { deviceId, namespace, trustedDeviceIds })` answers `proven`, `unproven` (`no_proof`, or `untrusted_revoker`) or `invalid`. Act at once on `proven`; on `unproven`, check `evidence` or your own records; treat `invalid` as a gateway that is misbehaving.
 
-**Evidence.** The revoker may attach the application's own proof, such as an account-signed roster entry: `"evidence"` beside `device_proof` on `DELETE /v1/auth/devices/{id}` (`client.auth.revokeDevice(id, { evidence })`), or alone on `DELETE /v1/namespace/devices/{id}`. It is at most 16 KiB of UTF-8 (base64 is a good fit); the gateway stores it with the tombstone and returns it verbatim, and never reads it. Whatever it must bind, the account and the revoked device included, is for your application to put in it and check. A device's tombstone keeps the first revocation's record: revoking it again changes nothing in it. `deny_device` attaches none.
+**Evidence.** The revoker may attach the application's own proof, such as an account-signed roster entry: `"evidence"` beside `device_proof` on `DELETE /v1/auth/devices/{id}` (`client.auth.revokeDevice(id, { evidence })`), or alone on `DELETE /v1/namespace/devices/{id}`. It is at most 16 KiB of UTF-8 (base64 is a good fit); the gateway stores it with the tombstone and returns it verbatim, and never reads it. Whatever it must bind, the account and the revoked device included, is for your application to put in it and check. A device's tombstone keeps the first revocation's record: revoking it again changes nothing in it. A function attaches evidence with `deny_device_with_evidence(subject, device, evidence)`; `deny_device` attaches none.
 
-`DEVICE_REVOKED` is only ever about the device presenting itself. Collecting a device link whose approving device has since been revoked answers `access_denied`. A revoked device's access tokens and sockets are refused with `AUTH_REVOKED` and close code 4403, and its refresh token was revoked with it (`401`); the answer that carries `revocation` is its next sign-in.
+`DEVICE_REVOKED` is only ever about the device presenting itself. Collecting a device link whose approving device has since been revoked answers `access_denied`.
+
+Every refusal of the revoked device carries `revocation`, within ten seconds of the revocation on every gateway:
+
+| The device presents | Answer |
+|---|---|
+| Its key, signing in | 403 `DEVICE_REVOKED` |
+| Its refresh token (revoked with the device) | 403 `DEVICE_REVOKED` |
+| Its access token, on any route, public ones and function calls included | 403 `DEVICE_REVOKED` |
+| Its access token, on a WebSocket upgrade (header or `?jwt=`) | 403 `DEVICE_REVOKED`, before the upgrade |
+| A new token in `auth.refresh` on an open function socket | ack `{"ok": false, "code": "DEVICE_REVOKED", "revocation": {…}}` |
+| An open socket opened with its token | closed with `4410` |
+
+A close frame holds at most 123 bytes, too few for a revocation, so `4410` says only that the device was revoked. A client told `4410` makes any request with the same token (`GET /v1/auth/whoami` will do) and checks the `revocation` of the 403 that answers; the TypeScript SDK does not reconnect a socket closed with `4410` (`WSCloseCode.DeviceRevoked`).
+
+A revoked token, session, key or account is not a revoked device: its refusals stay `401 AUTH_REVOKED` and close code `4403`, and carry no revocation. A capability socket closes with `4403` when the device that issued the capability is revoked: its holder is the correspondent the capability was handed to, not that device.
 
 ## Device policy
 

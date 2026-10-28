@@ -5,8 +5,10 @@
 # every function not deployed open_to_pending_devices; a function told its
 # caller's device state (get_caller_device_state) approves the device
 # (approve_device), after which the next refresh is a full session, or
-# denies it (deny_device), which ends its session on every gateway; an
-# account whose devices were all revoked recovers through the function.
+# denies it (deny_device, deny_device_with_evidence), which ends its session
+# on every gateway and answers its token and refresh token DEVICE_REVOKED
+# with the function's revocation and evidence; an account whose devices were
+# all revoked recovers through the function.
 # Needs tinygo on the runner's PATH.
 id: auth-device-admission
 title: Devices admitted by the namespace's functions
@@ -37,5 +39,6 @@ covers:
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: under the function policy the account's first device ever is active and every later one, recovery included, signs in to a pending session"
     - "docs/whitepaper/technical-reference/vol1/14-authorization.md#a-pending-devices-session: a pending session is refused DEVICE_PENDING_APPROVAL on every route but its own session's and the function routes, and on every function not open_to_pending_devices"
     - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: approve_device makes the next refresh a full session; deny_device ends the session on every gateway; neither acts on an active device"
+    - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: deny_device_with_evidence keeps the function's evidence; the denied device's token and refresh token answer DEVICE_REVOKED with revoked_by function, no proof, and the evidence verbatim"
     - "website/src/docs/developer/devices.mdx#devices-admitted-by-a-function: under the function policy a device link is refused DEVICE_LINK_FUNCTION_POLICY"
     - "website/src/docs/developer/functions.mdx#open-to-pending-devices: get_caller_device_state tells a function pending or active"

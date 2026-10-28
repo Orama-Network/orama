@@ -131,15 +131,15 @@ func AddWebRTCCount(ctx context.Context) int64 {
 }
 
 // deviceAdmissionCounterKey is the unexported context-value key for the
-// per-invocation approve_device / deny_device call counter.
+// per-invocation approve_device / deny_device / deny_device_with_evidence call counter.
 type deviceAdmissionCounterKey struct{}
 
-// deviceAdmissionCounter tracks how many approve_device and deny_device calls a
+// deviceAdmissionCounter tracks how many approve_device, deny_device and deny_device_with_evidence calls a
 // single invocation has made.
 type deviceAdmissionCounter struct{ n atomic.Int64 }
 
 // WithDeviceAdmissionCounter returns a derived ctx carrying a FRESH
-// per-invocation counter of approve_device and deny_device calls, for the same
+// per-invocation counter of approve_device, deny_device and deny_device_with_evidence calls, for the same
 // reason as WithWebRTCCounter: each call writes the gateway's device registry.
 func WithDeviceAdmissionCounter(ctx context.Context) context.Context {
 	return context.WithValue(ctx, deviceAdmissionCounterKey{}, &deviceAdmissionCounter{})

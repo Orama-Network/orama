@@ -324,6 +324,11 @@ func (s *Service) ParseAndVerifyJWT(token string) (*JWTClaims, error) {
 		return nil, err
 	}
 	if denied {
+		// A device revoked is told so, with its revocation, rather than as
+		// a token revoked: the client's next move differs (DEVICE_REVOKED).
+		if s.revocations.DeniesDevice(claims.Did) {
+			return nil, &DeviceTokenRevokedError{Claims: &claims}
+		}
 		return nil, ErrTokenRevoked
 	}
 	// Validate registered claims

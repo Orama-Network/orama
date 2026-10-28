@@ -23,8 +23,14 @@ const (
 	// not one this route will reach. Distinct from every other code here
 	// because retrying with a different credential will not help.
 	CodeDestinationNotAllowed = "DESTINATION_NOT_ALLOWED"
-	// CodeAuthRevoked — the credential was valid and has been revoked.
+	// CodeAuthRevoked — the credential was valid and has been revoked: the
+	// token itself, its session, the key it came from, or every session of
+	// its account. Not a revoked device, which is CodeDeviceRevoked.
 	CodeAuthRevoked = "AUTH_REVOKED"
+	// CodeDeviceRevoked — the token is refused because the device it is bound
+	// to was revoked. The answer's `revocation` says who revoked it and what
+	// proves it (feat-976): the client checks it before it acts on it.
+	CodeDeviceRevoked = "DEVICE_REVOKED"
 	// CodeAuthUnavailable — the gateway could not tell whether the credential
 	// was revoked (the revocation list is older than its bound and the registry
 	// cannot be read). Answered with a 503: the credential may be fine, so
@@ -91,6 +97,7 @@ var authHints = map[string]string{
 	CodeAuthMissing:           "send the credential in an Authorization header, or X-API-Key",
 	CodeAuthInvalidKey:        "check the key is for this cluster and has not been deleted",
 	CodeAuthRevoked:           "this credential or session was revoked; sign in again or use a new key",
+	CodeDeviceRevoked:         "this device was revoked and its key can never hold a session again; check revocation before acting on it",
 	CodeAuthUnavailable:       "this is temporary; retry in a few seconds with the same credential",
 	CodeAuthExpired:           "refresh the token, or sign in again",
 	CodeAuthUserJWTRequired:   "exchange the key for a token, or sign in as a user",

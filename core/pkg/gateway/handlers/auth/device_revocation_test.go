@@ -69,19 +69,11 @@ func TestDeviceRevoked_signInAndRefreshCarryTheRevokersProof(t *testing.T) {
 		t.Fatalf("revoke: %d %v", code, body)
 	}
 
+	// The revocation also revoked the device's refresh tokens. Its refresh
+	// token, refused for that, is refused for the device, with the
+	// revocation: it was answered 401 AUTH_REVOKED, which told the device
+	// nothing (feat-976).
 	refreshToken := second["refresh_token"].(string)
-	// A finished revocation also revoked the device's refresh tokens, so its
-	// refresh is refused for the token (401) before the device is read. A
-	// revocation that stopped after the tombstone leaves the token live: then
-	// the refresh is refused for the device, and must carry the proof too.
-	if code, body := f.do(f.h.RefreshHandler, http.MethodPost, "/v1/auth/refresh", map[string]any{
-		"refresh_token": refreshToken, "namespace": flowNamespace,
-		"device_proof": proof(laptop, authsvc.DeviceProofRefresh, refreshToken)}, nil); code != http.StatusUnauthorized {
-		t.Errorf("a revoked device's refresh token: %d %v, want 401", code, body)
-	}
-	if _, err := f.db.Exec(`UPDATE refresh_tokens SET revoked_at = NULL, grace_used_at = NULL WHERE device_id = ?`, laptop.id); err != nil {
-		t.Fatal(err)
-	}
 	signIn := func() (int, map[string]any) { return f.signIn(w, laptop) }
 	refresh := func() (int, map[string]any) {
 		return f.do(f.h.RefreshHandler, http.MethodPost, "/v1/auth/refresh", map[string]any{

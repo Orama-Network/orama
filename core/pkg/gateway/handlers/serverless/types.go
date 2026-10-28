@@ -1,6 +1,7 @@
 package serverless
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -21,6 +22,9 @@ import (
 // the full auth service.
 type JWTVerifier interface {
 	ParseAndVerifyJWT(token string) (*auth.JWTClaims, error)
+	// DeviceRevocationRecord is the revocation of a device whose token
+	// ParseAndVerifyJWT refused for it, which an auth.refresh ack carries.
+	DeviceRevocationRecord(ctx context.Context, namespace, id string) (*auth.DeviceRevocationRecord, error)
 }
 
 // ServerlessHandlers contains handlers for serverless function endpoints.

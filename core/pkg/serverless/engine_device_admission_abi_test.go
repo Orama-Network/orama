@@ -26,6 +26,8 @@ func TestEngine_HostModule_DeviceAdmissionCallsExported(t *testing.T) {
 		// (subject ptr, len, device ptr, len) -> 1 done, 0 failed
 		"approve_device": {[]api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32}},
 		"deny_device":    {[]api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32}},
+		// (subject ptr, len, device ptr, len, evidence ptr, len) -> 1 done, 0 failed (feat-976)
+		"deny_device_with_evidence": {[]api.ValueType{i32, i32, i32, i32, i32, i32}, []api.ValueType{i32}},
 	}
 	for _, module := range []string{"env", "host", "orama"} {
 		fns := engine.runtime.Module(module).ExportedFunctionDefinitions()

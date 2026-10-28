@@ -226,9 +226,12 @@ func (h *ServerlessHandlers) socketClaims(r *http.Request) *auth.JWTClaims {
 // attestation middleware judged is held to its namespace's policy as well.
 func (h *ServerlessHandlers) registerSocket(r *http.Request, closeFn wssession.Closer) *wssession.Socket {
 	var sock *wssession.Socket
-	if claims := h.socketClaims(r); claims != nil {
+	switch claims := h.socketClaims(r); {
+	case claims != nil && requestCapability(r) != nil:
+		sock = h.sessions.RegisterCapability(claims, closeFn)
+	case claims != nil:
 		sock = h.sessions.Register(claims, closeFn)
-	} else {
+	default:
 		keyID, _ := r.Context().Value(ctxkeys.KeyID).(int64)
 		sock = h.sessions.RegisterKey(keyID, closeFn)
 	}

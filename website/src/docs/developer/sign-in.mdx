@@ -180,7 +180,7 @@ for a key and a JWT alike. On a WebSocket upgrade, where a browser cannot set a 
 | Narrowing a key's scopes, or revoking a grant it holds | Within one minute, on every gateway that had seen it |
 | Revoking the token an open WebSocket was opened with | The socket closes within 10 seconds (`4403`) |
 | Ending a session | Its access tokens are refused and its sockets closed within 10 seconds |
-| Revoking a device | Its sessions, access tokens and sockets end within 10 seconds |
+| Revoking a device | Its sessions, access tokens and sockets end within 10 seconds (`403 DEVICE_REVOKED`, close code `4410`) |
 | A WebSocket's token expiring | Closed within 10 seconds of two minutes past `exp` (`4401`), unless refreshed on the socket |
 | Closing sign-in | New sign-ins refused at once; a grantless wallet's refresh within 10 seconds |
 | Setting a session policy | At once for everything that issues a credential |
@@ -200,6 +200,7 @@ A refusal from the authentication middleware, and the sign-in, device and fetch-
 | `AUTH_MISSING` | No credential presented |
 | `AUTH_INVALID_KEY` | The key is not one this cluster knows |
 | `AUTH_REVOKED` | The credential was revoked. Sign in again |
+| `DEVICE_REVOKED` | The device this token is bound to was revoked (403). It can never sign in again; see [What a revoked device is told](/docs/developer/devices#what-a-revoked-device-is-told) |
 | `AUTH_UNAVAILABLE` | The gateway could not tell whether it was revoked (503, `Retry-After`). Retry |
 | `AUTH_EXPIRED` | The access token expired. Refresh it |
 | `USER_JWT_REQUIRED` | This operation needs a logged-in user; a key alone is not enough |

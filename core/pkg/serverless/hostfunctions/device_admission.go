@@ -16,17 +16,20 @@ import (
 // deny_device carry out the decision, in the calling function's namespace
 // only, through the gateway's device registry — never through the caller's
 // token, so what a pending caller can make of them is exactly what the
-// function's code lets it.
+// function's code lets it. deny_device_with_evidence denies as deny_device
+// does and attaches the application's evidence (an account-signed statement,
+// for example) to the device's tombstone, which the device is shown in its
+// DEVICE_REVOKED refusals (feat-976).
 
 // DeviceAdmitter approves and denies pending devices of a namespace. The
 // gateway's is its *auth.Service.
 type DeviceAdmitter interface {
 	ApprovePendingDevice(ctx context.Context, namespace, subject, device, approver string) error
-	DenyPendingDevice(ctx context.Context, namespace, subject, device, approver string) error
+	DenyPendingDevice(ctx context.Context, namespace, subject, device, approver, evidence string) error
 }
 
-// maxDeviceAdmissionsPerInvocation caps how many approve_device and
-// deny_device calls one invocation (or persistent socket frame) may make. A
+// maxDeviceAdmissionsPerInvocation caps how many approve_device, deny_device
+// and deny_device_with_evidence calls one invocation (or persistent socket frame) may make. A
 // real admission decides on one device; each call writes the registry, and
 // the WASM runtime has no fuel metering, so a runaway loop would otherwise
 // hammer it.
@@ -76,12 +79,22 @@ func (h *HostFunctions) ApproveDevice(ctx context.Context, subject, device strin
 // DenyDevice revokes subject's pending device in the calling function's
 // namespace, which ends its restricted session.
 func (h *HostFunctions) DenyDevice(ctx context.Context, subject, device string) error {
-	ns, approver, a, err := h.deviceAdmission(ctx, "deny_device", subject, device)
+	return h.denyDevice(ctx, "deny_device", subject, device, "")
+}
+
+// DenyDeviceWithEvidence denies as DenyDevice does and keeps evidence, at most
+// 16 KiB of UTF-8, with the device's tombstone, verbatim.
+func (h *HostFunctions) DenyDeviceWithEvidence(ctx context.Context, subject, device, evidence string) error {
+	return h.denyDevice(ctx, "deny_device_with_evidence", subject, device, evidence)
+}
+
+func (h *HostFunctions) denyDevice(ctx context.Context, fn, subject, device, evidence string) error {
+	ns, approver, a, err := h.deviceAdmission(ctx, fn, subject, device)
 	if err != nil {
 		return err
 	}
-	if err := a.DenyPendingDevice(ctx, ns, strings.TrimSpace(subject), strings.TrimSpace(device), approver); err != nil {
-		return &serverless.HostFunctionError{Function: "deny_device", Cause: err}
+	if err := a.DenyPendingDevice(ctx, ns, strings.TrimSpace(subject), strings.TrimSpace(device), approver, evidence); err != nil {
+		return &serverless.HostFunctionError{Function: fn, Cause: err}
 	}
 	return nil
 }

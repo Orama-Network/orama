@@ -361,7 +361,7 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 |---|---|---|
 | `AUTH_MISSING` | 401 (403 at the ownership gate when the route needs an identity and the credential carries none) | no credential was presented |
 | `AUTH_INVALID_KEY` | 401 | the key is not one this cluster knows (never issued, expired, or its registry lookup failed on a cache miss) |
-| `AUTH_REVOKED` | 401 | the credential was revoked; sign in again or use a new key |
+| `AUTH_REVOKED` | 401 | the credential was revoked (the token, its session, the key it came from, or every session of its account); sign in again or use a new key. A token refused because its device was revoked is `DEVICE_REVOKED` |
 | `AUTH_UNAVAILABLE` | 503, `Retry-After: 2` | the gateway could not tell whether the credential was revoked (the revocation list is older than its 10 s bound and the registry cannot be read), or could not read the namespace's attestation policy; retry with the same credential |
 | `AUTH_EXPIRED` | 401 | the access token expired; refresh it. Every auth path answers it: the gateway middleware, the namespace proxy and the serverless router; an expired token is never reported as `AUTH_MISSING` |
 | `USER_JWT_REQUIRED` | 401 | the route needs a logged-in user (on storage and WebRTC a deployed app's own token also qualifies); a key alone is not enough. Also the anonymity tunnel's refusal of a non-user |
@@ -426,7 +426,7 @@ Every credential, namespace, scope and operator refusal carries `{error, code, h
 | `DEVICE_PROOF_REQUIRED` | 401 | a device-bound credential was presented without the device's proof |
 | `DEVICE_PROOF_INVALID` | 401 | the proof is malformed, reused, or not the device's |
 | `DEVICE_PROOF_CLOCK_SKEW` | 401 | the proof's time is more than 60 s from the gateway's clock; `server_time` is the gateway's clock (unix seconds) |
-| `DEVICE_REVOKED` | 403 | the device presenting itself was revoked; its key can never hold a session again. `revocation` is who revoked it and what proves it ([identity](13-identity.md#revoking-a-device)) |
+| `DEVICE_REVOKED` | 403 | the device presenting itself was revoked; its key can never hold a session again. `revocation` is who revoked it and what proves it ([identity](13-identity.md#revoking-a-device)). Answered to its sign-in, its refresh token, and its access token on every route and WebSocket upgrade, public ones included |
 | `DEVICE_PENDING` | 403 (202 on sign-in) | the device waits for another of the account's devices to approve it; under the function policy, a pending device's refresh after the namespace left the policy |
 | `DEVICE_PENDING_APPROVAL` | 403 | a pending device's restricted session asked for a route, or a function, not open to it; `device_id` is the device ([a pending device's session](#a-pending-devices-session)) |
 | `DEVICE_NOT_FOUND` | 404 | the account has no such device |

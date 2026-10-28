@@ -59,7 +59,7 @@ func TestEnrolFirstOrPendingDevice_onlyTheFirstEverIsActive(t *testing.T) {
 	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, first.ID, byAccount); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, second.ID, "function:test"); err != nil {
+	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, second.ID, "function:test", ""); err != nil {
 		t.Fatal(err)
 	}
 	if third := enrolUnderFunction(t, s, ed25519Device(t)); third.State != DeviceStatePending {
@@ -195,7 +195,7 @@ func TestDenyPendingDevice_endsTheRestrictedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, dev.ID, "function:device-join"); err != nil {
+	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, dev.ID, "function:device-join", ""); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
 	if !mustRevoked(s, claims) {
@@ -205,7 +205,7 @@ func TestDenyPendingDevice_endsTheRestrictedSession(t *testing.T) {
 		t.Error("a denied device refreshed its session")
 	}
 	// Denied again: done already, its sessions ended again.
-	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, dev.ID, "function:device-join"); err != nil {
+	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, dev.ID, "function:device-join", ""); err != nil {
 		t.Errorf("a second denial failed: %v", err)
 	}
 	// An approval cannot revive it.
@@ -213,7 +213,7 @@ func TestDenyPendingDevice_endsTheRestrictedSession(t *testing.T) {
 		t.Errorf("approving a denied device: %v, want ErrDeviceRevoked", err)
 	}
 	// An active device is its account's to revoke, not a function's to deny.
-	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, first.ID, "function:device-join"); !errors.Is(err, ErrDeviceNotPending) {
+	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, first.ID, "function:device-join", ""); !errors.Is(err, ErrDeviceNotPending) {
 		t.Errorf("denying an active device: %v, want ErrDeviceNotPending", err)
 	}
 }
@@ -228,7 +228,7 @@ func TestApprovePendingDevice_needsTheFunctionPolicyAndTheAccountsDevice(t *test
 	if err := s.ApprovePendingDevice(ctx, "anchat", "0xb0b", dev.ID, "function:x"); !errors.Is(err, ErrDeviceNotFound) {
 		t.Errorf("approving another account's device: %v, want ErrDeviceNotFound", err)
 	}
-	if err := s.DenyPendingDevice(ctx, "anchat", "0xb0b", dev.ID, "function:x"); !errors.Is(err, ErrDeviceNotFound) {
+	if err := s.DenyPendingDevice(ctx, "anchat", "0xb0b", dev.ID, "function:x", ""); !errors.Is(err, ErrDeviceNotFound) {
 		t.Errorf("denying another account's device: %v, want ErrDeviceNotFound", err)
 	}
 

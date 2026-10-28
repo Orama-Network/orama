@@ -272,6 +272,24 @@ func (r *RevocationList) RevokeDevice(ctx context.Context, deviceID string) erro
 	return r.RevokeSubject(ctx, deviceRevocationPrefix+deviceID, "device revoked", MaxDeviceIssuedLifetime)
 }
 
+// DeniesDevice reports whether a device is on the list. A token Denies
+// refused, bound to a device this reports, was refused for its device: what
+// tells DEVICE_REVOKED from AUTH_REVOKED. It answers from the copy Denies just
+// checked, and never reads the registry.
+func (r *RevocationList) DeniesDevice(deviceID string) bool {
+	if r == nil {
+		return false
+	}
+	key := bindingRevocationKey(deviceRevocationPrefix, deviceID)
+	if key == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, denied := r.bySubject[key]
+	return denied
+}
+
 // RevokeSessionID refuses every access token of one session, whichever
 // rotation of its refresh token minted it.
 func (r *RevocationList) RevokeSessionID(ctx context.Context, sessionID string) error {
@@ -715,6 +733,13 @@ func (s *Service) Revoked(claims *JWTClaims) (bool, error) {
 		return false, nil
 	}
 	return s.revocations.Denies(claims, s.revocationSubjectKeys(claims.Sub))
+}
+
+// DeviceRevoked reports whether claims' device is on the revocation list. It
+// is asked of a token Revoked already refused, to tell a revoked device
+// (DEVICE_REVOKED) from a revoked token, session or subject (AUTH_REVOKED).
+func (s *Service) DeviceRevoked(claims *JWTClaims) bool {
+	return claims != nil && s.revocations.DeniesDevice(claims.Did)
 }
 
 // RevocationsUsable reports whether the list can answer from the copy it holds,

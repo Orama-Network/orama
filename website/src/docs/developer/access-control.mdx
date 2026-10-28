@@ -192,6 +192,7 @@ A WebSocket is authorised once, at the upgrade. Every socket opened with a token
 |---|---|
 | `4401` | The token expired more than two minutes ago and was not refreshed on the socket. Reconnect with a fresh token |
 | `4403` | The token, its session or its subject was revoked. Sign in again |
+| `4410` | The device the token is bound to was revoked; it can never sign in again. Any request with the token answers `403 DEVICE_REVOKED` with the revocation ([What a revoked device is told](/docs/developer/devices#what-a-revoked-device-is-told)) |
 | `4503` | The gateway could not check revocation for 2 minutes. Reconnect shortly |
 
 A persistent function socket takes `{"__orama":"auth.refresh","jwt":…}` and is held to the new token from then on. A refresh must be for the **same subject**, and a socket opened with an API key or no credential cannot take one. A socket opened with an API key has no token; it is held to the key instead, and revoking the key closes its open sockets with `4403` within ten seconds as well as refusing new ones.

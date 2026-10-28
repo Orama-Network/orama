@@ -19,8 +19,8 @@ func (r *recordingAdmitter) ApprovePendingDevice(_ context.Context, ns, subject,
 	return r.err
 }
 
-func (r *recordingAdmitter) DenyPendingDevice(_ context.Context, ns, subject, device, approver string) error {
-	r.calls = append(r.calls, strings.Join([]string{"deny", ns, subject, device, approver}, "|"))
+func (r *recordingAdmitter) DenyPendingDevice(_ context.Context, ns, subject, device, approver, evidence string) error {
+	r.calls = append(r.calls, strings.Join([]string{"deny", ns, subject, device, approver, evidence}, "|"))
 	return r.err
 }
 
@@ -42,9 +42,13 @@ func TestDeviceAdmission_actsInTheCallingFunctionsNamespace(t *testing.T) {
 	if err := h.DenyDevice(ctx, "0xwallet", "device-3"); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
+	if err := h.DenyDeviceWithEvidence(ctx, "0xwallet", "device-4", "roster-link"); err != nil {
+		t.Fatalf("deny with evidence: %v", err)
+	}
 	want := []string{
 		"approve|anchat|0xwallet|device-2|function:device-join",
-		"deny|anchat|0xwallet|device-3|function:device-join",
+		"deny|anchat|0xwallet|device-3|function:device-join|",
+		"deny|anchat|0xwallet|device-4|function:device-join|roster-link",
 	}
 	if strings.Join(a.calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want %v", a.calls, want)
@@ -55,8 +59,9 @@ func TestDeviceAdmission_wrapsTheRegistrysRefusal(t *testing.T) {
 	boom := errors.New("not pending")
 	h, ctx := admitterHost(&recordingAdmitter{err: boom})
 	for name, err := range map[string]error{
-		"approve_device": h.ApproveDevice(ctx, "0xwallet", "d"),
-		"deny_device":    h.DenyDevice(ctx, "0xwallet", "d"),
+		"approve_device":            h.ApproveDevice(ctx, "0xwallet", "d"),
+		"deny_device":               h.DenyDevice(ctx, "0xwallet", "d"),
+		"deny_device_with_evidence": h.DenyDeviceWithEvidence(ctx, "0xwallet", "d", "e"),
 	} {
 		var hfe *serverless.HostFunctionError
 		if !errors.As(err, &hfe) || !errors.Is(err, boom) || hfe.Function != name {
@@ -85,6 +90,9 @@ func TestDeviceAdmission_refusesWithoutAnInvocationAnAdmitterOrATarget(t *testin
 	if err := h.DenyDevice(ctx, "0xw", ""); err == nil {
 		t.Error("deny with no device succeeded")
 	}
+	if err := h.DenyDeviceWithEvidence(ctx, "", "d", "e"); err == nil {
+		t.Error("deny with evidence and no subject succeeded")
+	}
 	if len(a.calls) != 0 {
 		t.Errorf("a refused call reached the registry: %v", a.calls)
 	}
@@ -100,7 +108,7 @@ func TestDeviceAdmission_budgetIsPerInvocation(t *testing.T) {
 			t.Fatalf("call %d within the budget failed: %v", i+1, err)
 		}
 	}
-	if err := h.DenyDevice(ctx, "0xw", "d"); !errors.Is(err, ErrDeviceAdmissionBudgetExceeded) {
+	if err := h.DenyDeviceWithEvidence(ctx, "0xw", "d", "e"); !errors.Is(err, ErrDeviceAdmissionBudgetExceeded) {
 		t.Fatalf("call past the budget: err = %v, want ErrDeviceAdmissionBudgetExceeded", err)
 	}
 	if len(a.calls) != maxDeviceAdmissionsPerInvocation {

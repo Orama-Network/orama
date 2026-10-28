@@ -42,6 +42,7 @@ const (
 	stateActive  = "active"
 
 	codePending            = "DEVICE_PENDING_APPROVAL"
+	codeDeviceRevoked      = "DEVICE_REVOKED"
 	codeLinkFunctionPolicy = "DEVICE_LINK_FUNCTION_POLICY"
 
 	roleRuntime = "runtime"
@@ -181,14 +182,49 @@ func whoCalled(t testing.TB, fx *fixture, bearer string) caller {
 // the gateway carried it out.
 func decide(t testing.TB, fx *fixture, bearer, op, subject, device string) bool {
 	t.Helper()
+	return decideWith(t, fx, bearer, map[string]string{"op": op, "subject": subject, "device": device})
+}
+
+// denyWithEvidence has the fixture deny device with deny_device_with_evidence.
+func denyWithEvidence(t testing.TB, fx *fixture, bearer, subject, device, evidence string) bool {
+	t.Helper()
+	return decideWith(t, fx, bearer, map[string]string{"op": "deny_with_evidence", "subject": subject, "device": device, "evidence": evidence})
+}
+
+// decideWith runs one of the fixture's admission ops and reports whether the
+// host function did it.
+func decideWith(t testing.TB, fx *fixture, bearer string, op map[string]string) bool {
+	t.Helper()
 	var out struct {
 		Done bool `json:"done"`
 	}
-	resp := call(t, fx, admitFn, bearer, map[string]string{"op": op, "subject": subject, "device": device})
+	resp := call(t, fx, admitFn, bearer, op)
 	if err := resp.Expect(t, http.StatusOK).Decode(&out); err != nil {
 		t.Fatal(err)
 	}
 	return out.Done
+}
+
+// deviceRevoked is the revocation of a 403 DEVICE_REVOKED answer, nil for any
+// other answer.
+func deviceRevoked(resp *gw.Response) *revocation {
+	var body struct {
+		Code       string      `json:"code"`
+		Revocation *revocation `json:"revocation"`
+	}
+	if resp.Status != http.StatusForbidden || json.Unmarshal(resp.Body, &body) != nil || body.Code != codeDeviceRevoked {
+		return nil
+	}
+	return body.Revocation
+}
+
+// revocation is the `revocation` of a DEVICE_REVOKED answer
+// (docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device).
+type revocation struct {
+	DeviceID  string          `json:"device_id"`
+	RevokedBy string          `json:"revoked_by"`
+	Proof     json.RawMessage `json:"proof"`
+	Evidence  *string         `json:"evidence"`
 }
 
 // refusedPending fails unless resp is the pending-device refusal: 403 with

@@ -53,7 +53,16 @@ type oramaControlAck struct {
 	OK      bool   `json:"ok"`
 	Error   string `json:"error,omitempty"`
 	Subject string `json:"subject,omitempty"` // populated on successful auth.refresh
+	// Code is DEVICE_REVOKED on an auth.refresh refused because the token's
+	// device was revoked, with Revocation its revocation (feat-976), the
+	// record a 403 DEVICE_REVOKED carries. Empty on every other ack.
+	Code       string                       `json:"code,omitempty"`
+	Revocation *auth.DeviceRevocationRecord `json:"revocation,omitempty"`
 }
+
+// ackCodeDeviceRevoked is the ack Code of an auth.refresh refused because the
+// token's device was revoked: the code a request answers in that case.
+const ackCodeDeviceRevoked = "DEVICE_REVOKED"
 
 // handlePersistentWebSocket runs the per-connection persistent function model.
 // One WASM instance is bound to this WS for its entire lifetime. Frames are
@@ -210,7 +219,7 @@ func (h *ServerlessHandlers) handlePersistentWebSocket(
 		// avoids json.Unmarshal for every application frame. Only
 		// frames carrying the `"__orama"` key get parsed.
 		if bytes.Contains(frame, oramaControlFramePrefix) {
-			handled, ackErr := h.handleOramaControlFrame(frame, fn, inst, sock, namespace, clientID, conn)
+			handled, ackErr := h.handleOramaControlFrame(r.Context(), frame, fn, inst, sock, namespace, clientID, conn)
 			if ackErr != nil {
 				h.logger.Warn("persistent WS: control-frame ack write failed",
 					zap.String("client_id", clientID),
@@ -317,6 +326,7 @@ func (h *ServerlessHandlers) buildPersistentInvocationContext(
 // Bugboard #321: introduced for the auth.refresh path so persistent
 // WS connections survive JWT rotation without a close+reconnect.
 func (h *ServerlessHandlers) handleOramaControlFrame(
+	ctx context.Context,
 	frame []byte,
 	fn *serverless.Function,
 	inst *persistent.Instance,
@@ -336,7 +346,7 @@ func (h *ServerlessHandlers) handleOramaControlFrame(
 
 	switch ctrl.Type {
 	case "auth.refresh":
-		return true, h.handleAuthRefresh(ctrl, fn, inst, sock, namespace, clientID, conn)
+		return true, h.handleAuthRefresh(ctx, ctrl, fn, inst, sock, namespace, clientID, conn)
 	default:
 		// Unknown control type — ack with an error so the client knows
 		// the frame was seen but ignored. Treat as handled (don't
@@ -349,11 +359,49 @@ func (h *ServerlessHandlers) handleOramaControlFrame(
 	}
 }
 
+// refusedRefreshAck is the ack of an auth.refresh whose token
+// ParseAndVerifyJWT refused with err. A token refused because its device was
+// revoked is answered DEVICE_REVOKED with the device's revocation, read only
+// now that the token is refused. A revocation list or registry that cannot be
+// read is answered as retryable, and the ack never carries the read's error,
+// which can name why it failed.
+func (h *ServerlessHandlers) refusedRefreshAck(ctx context.Context, err error, clientID string) oramaControlAck {
+	var revokedDevice *auth.DeviceTokenRevokedError
+	switch {
+	case errors.As(err, &revokedDevice):
+		rec, rerr := h.jwtVerifier.DeviceRevocationRecord(ctx, revokedDevice.Claims.Namespace, revokedDevice.Claims.Did)
+		if rerr != nil {
+			h.logger.Warn("persistent WS: could not read a revoked device's revocation for auth.refresh",
+				zap.String("client_id", clientID),
+				zap.Error(rerr))
+			return oramaControlAck{Type: "auth.refresh", Error: authRefreshUnavailableMessage}
+		}
+		return oramaControlAck{
+			Type:       "auth.refresh",
+			Error:      "invalid or expired jwt: " + err.Error(),
+			Code:       ackCodeDeviceRevoked,
+			Revocation: rec,
+		}
+	case errors.Is(err, auth.ErrRevocationsUnavailable):
+		// Not a verdict on the token: the gateway could not tell whether it
+		// was revoked. The client keeps its socket and retries.
+		h.logger.Warn("persistent WS: auth.refresh could not be checked against the revocation list",
+			zap.String("client_id", clientID),
+			zap.Error(err))
+		return oramaControlAck{Type: "auth.refresh", Error: authRefreshUnavailableMessage}
+	}
+	h.logger.Info("persistent WS: auth.refresh rejected (invalid jwt)",
+		zap.String("client_id", clientID),
+		zap.Error(err))
+	return oramaControlAck{Type: "auth.refresh", Error: "invalid or expired jwt: " + err.Error()}
+}
+
 // handleAuthRefresh validates the new JWT, swaps the persistent
 // instance's invocation context atomically, and acks the client.
 // On invalid JWT: ack with ok=false and a reason. Does NOT close the
 // WS — the client can retry with a fresh token. Bugboard #321.
 func (h *ServerlessHandlers) handleAuthRefresh(
+	ctx context.Context,
 	ctrl oramaControlFrame,
 	fn *serverless.Function,
 	inst *persistent.Instance,
@@ -386,28 +434,8 @@ func (h *ServerlessHandlers) handleAuthRefresh(
 		})
 	}
 	claims, err := h.jwtVerifier.ParseAndVerifyJWT(ctrl.JWT)
-	if errors.Is(err, auth.ErrRevocationsUnavailable) {
-		// Not a verdict on the token: the gateway could not tell whether it
-		// was revoked. The client keeps its socket and retries. The ack never
-		// carries err, which can name why the registry could not be read.
-		h.logger.Warn("persistent WS: auth.refresh could not be checked against the revocation list",
-			zap.String("client_id", clientID),
-			zap.Error(err))
-		return h.writeControlAck(conn, oramaControlAck{
-			Type:  "auth.refresh",
-			OK:    false,
-			Error: authRefreshUnavailableMessage,
-		})
-	}
 	if err != nil {
-		h.logger.Info("persistent WS: auth.refresh rejected (invalid jwt)",
-			zap.String("client_id", clientID),
-			zap.Error(err))
-		return h.writeControlAck(conn, oramaControlAck{
-			Type:  "auth.refresh",
-			OK:    false,
-			Error: "invalid or expired jwt: " + err.Error(),
-		})
+		return h.writeControlAck(conn, h.refusedRefreshAck(ctx, err, clientID))
 	}
 
 	if reason := validateRefreshClaims(claims, fn.Namespace); reason != "" {

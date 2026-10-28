@@ -1,9 +1,11 @@
 // Command function is the device-admission fixture: TinyGo, WASI, stateless.
 // It reports who called and the state of the caller's device
 // (get_caller_jwt_subject, get_caller_device_id, get_caller_device_state),
-// and approves or denies a pending device (approve_device, deny_device) — the
-// namespace's own admission decision, which an application takes after its
-// own check (a code shown on both devices, a recovery question).
+// and approves or denies a pending device (approve_device, deny_device, and
+// deny_device_with_evidence, which keeps the application's evidence with the
+// revocation) — the namespace's own admission decision, which an application
+// takes after its own check (a code shown on both devices, a recovery
+// question).
 package main
 
 import (
@@ -28,10 +30,14 @@ func approveDevice(subPtr, subLen, devPtr, devLen uint32) uint32
 //go:wasmimport env deny_device
 func denyDevice(subPtr, subLen, devPtr, devLen uint32) uint32
 
+//go:wasmimport env deny_device_with_evidence
+func denyDeviceWithEvidence(subPtr, subLen, devPtr, devLen, evPtr, evLen uint32) uint32
+
 type request struct {
-	Op      string `json:"op"`
-	Subject string `json:"subject"`
-	Device  string `json:"device"`
+	Op       string `json:"op"`
+	Subject  string `json:"subject"`
+	Device   string `json:"device"`
+	Evidence string `json:"evidence"`
 }
 
 func main() {
@@ -52,6 +58,9 @@ func main() {
 		reply(map[string]any{"done": approveDevice(ptr(req.Subject), uint32(len(req.Subject)), ptr(req.Device), uint32(len(req.Device))) == 1})
 	case "deny":
 		reply(map[string]any{"done": denyDevice(ptr(req.Subject), uint32(len(req.Subject)), ptr(req.Device), uint32(len(req.Device))) == 1})
+	case "deny_with_evidence":
+		reply(map[string]any{"done": denyDeviceWithEvidence(ptr(req.Subject), uint32(len(req.Subject)), ptr(req.Device), uint32(len(req.Device)),
+			ptr(req.Evidence), uint32(len(req.Evidence))) == 1})
 	default:
 		reply(map[string]any{
 			"subject":      unpack(getCallerJWTSubject()),

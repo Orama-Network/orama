@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -114,4 +115,82 @@ func TestDeviceRevoked_refusalCarriesTheRevocation(t *testing.T) {
 	if op.RevokedBy != "operator" || op.Proof != nil || op.Evidence == nil || *op.Evidence != "roster-v9" {
 		t.Errorf("an operator's revocation reads %+v, want operator with no proof and its evidence", op)
 	}
+}
+
+// revocationIn is the revocation of resp, which must be 403 DEVICE_REVOKED.
+func revocationIn(t *testing.T, what string, resp *gw.Response) revocation {
+	t.Helper()
+	expectCode(t, resp, http.StatusForbidden, codeDeviceRevoked)
+	var body struct {
+		Revocation *revocation `json:"revocation"`
+	}
+	if err := json.Unmarshal(resp.Body, &body); err != nil || body.Revocation == nil {
+		t.Fatalf("%s: DEVICE_REVOKED without its revocation: %v %.400s", what, err, resp.Body)
+	}
+	return *body.Revocation
+}
+
+// TestDeviceRevoked_everyRefusalOfItsTokenCarriesTheRevocation: once a device
+// is revoked, its open socket closes with 4410, and its access token is
+// answered 403 DEVICE_REVOKED with the revocation on every public and
+// namespace gateway, on a request, on a function call (an open route, which
+// would otherwise serve it as anonymous), on a WebSocket upgrade, and on its
+// refresh token's refresh. A revoked session's token stays AUTH_REVOKED
+// (docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device).
+func TestDeviceRevoked_everyRefusalOfItsTokenCarriesTheRevocation(t *testing.T) {
+	t.Parallel()
+	f := harness.Fleet(t)
+	n := ns.New(t, f, ns.Options{})
+	c := harness.GW(t)
+	w := member(t, n, roleRuntime)
+	lost, kept := gw.NewDevice(t, wallet.AlgEd25519), gw.NewDevice(t, wallet.AlgEd25519)
+	lostS := signInSession(t, c, w, n.Name, lost)
+	keptS := signInSession(t, c, w, n.Name, kept)
+	open := mustSubscribe(t, n.Client, lostS.AccessToken, nil)
+
+	const evidence = "roster-v10"
+	send(t, c, http.MethodDelete, gw.PathDevices+"/"+lost.ID(), keptS.AccessToken,
+		map[string]any{"device_proof": proof(t, kept, wallet.ProofRevoke, n.Name, lost.ID()), "evidence": evidence}).Expect(t, http.StatusOK)
+
+	if code := open.closeCode(t, sweepBudget); code != closeDeviceRevoked {
+		t.Errorf("the revoked device's open socket closed with %d, want %d within %s", code, closeDeviceRevoked, sweepBudget)
+	}
+	gateways := append(perNode(t, f, c), perNode(t, f, n.Client)...)
+	deviceRevokedEverywhere(t, gateways, lostS.AccessToken, "the revoked device's access token")
+
+	answers := map[string]*gw.Response{
+		"whoami":          c.MustSend(t, gw.Req{Path: gw.PathWhoami, Bearer: lostS.AccessToken}),
+		"function call":   n.Client.MustSend(t, gw.Req{Method: http.MethodPost, Path: "/v1/invoke/" + n.Name + "/e2e-none", Bearer: lostS.AccessToken}),
+		"refresh":         refreshWith(t, c, lostS.RefreshToken, n.Name, proof(t, lost, wallet.ProofRefresh, n.Name, lostS.RefreshToken)),
+		"socket upgrade":  wsRefusal(t, n.Client, lostS.AccessToken),
+		"proxied upgrade": wsRefusal(t, c, lostS.AccessToken),
+	}
+	for what, resp := range answers {
+		rec := revocationIn(t, what, resp)
+		if rec.DeviceID != lost.ID() || rec.RevokedBy != "device" || rec.Proof == nil || rec.Proof.DeviceID != kept.ID() ||
+			rec.Evidence == nil || *rec.Evidence != evidence {
+			t.Errorf("%s: revocation %+v, want the kept device's, with its evidence", what, rec)
+		}
+	}
+
+	if _, err := c.For(t).Logout(t.Context(), keptS.AccessToken, keptS.RefreshToken, n.Name, false); err != nil {
+		t.Fatal(err)
+	}
+	refusedEverywhereWith(t, perNode(t, f, c), keptS.AccessToken, "a logged-out session's token", http.StatusUnauthorized, "AUTH_REVOKED")
+}
+
+// wsRefusal is the answer to a pub/sub upgrade with bearer, which must be
+// refused before the upgrade.
+func wsRefusal(t *testing.T, c *gw.Client, bearer string) *gw.Response {
+	t.Helper()
+	conn, resp, err := subscribe(t, c, bearer, nil)
+	if conn != nil || resp == nil {
+		t.Fatalf("the upgrade was not refused: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read the refused upgrade's body: %v", err)
+	}
+	return &gw.Response{Status: resp.StatusCode, Header: resp.Header, Body: body}
 }

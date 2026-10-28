@@ -406,8 +406,8 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 	// Likewise for the webrtc_* host calls, each of which writes the namespace's
 	// database and calls every SFU.
 	execCtx = WithWebRTCCounter(execCtx)
-	// And for approve_device / deny_device, each of which writes the device
-	// registry.
+	// And for approve_device / deny_device / deny_device_with_evidence, each of
+	// which writes the device registry.
 	execCtx = WithDeviceAdmissionCounter(execCtx)
 	// And for the gateway log lines its host calls write (bugboard #424).
 	execCtx, logBudget := WithHostLogBudget(execCtx)
@@ -1023,6 +1023,7 @@ func (e *Engine) registerHostModule(ctx context.Context) error {
 			NewFunctionBuilder().WithFunc(e.hGetCallerDeviceState).Export("get_caller_device_state").
 			NewFunctionBuilder().WithFunc(e.hApproveDevice).Export("approve_device").
 			NewFunctionBuilder().WithFunc(e.hDenyDevice).Export("deny_device").
+			NewFunctionBuilder().WithFunc(e.hDenyDeviceWithEvidence).Export("deny_device_with_evidence").
 			NewFunctionBuilder().WithFunc(e.hGetCallerCapability).Export("get_caller_capability").
 			NewFunctionBuilder().WithFunc(e.hCapabilityMint).Export("capability_mint").
 			NewFunctionBuilder().WithFunc(e.hCapabilityRevoke).Export("capability_revoke").

@@ -7,6 +7,7 @@ import {
   NetworkError,
   NotFoundError,
   RevokedCredentialError,
+  RevokedDeviceError,
   ScopeError,
   SDKError,
 } from '../../src/errors';
@@ -188,6 +189,21 @@ describe('auth codes', () => {
     expect(error).toBeInstanceOf(AuthError);
     expect(error).toBeInstanceOf(SDKError);
     expect(error.code).toBe('AUTH_REVOKED');
+  });
+
+  /**
+   * feat-976: DEVICE_REVOKED reaches any request of a revoked device. As a
+   * ScopeError it read as a missing grant, which an application answers by
+   * asking for more scopes, not by checking the revocation.
+   */
+  it('gives a revoked device its own error, not a missing grant', () => {
+    const revocation = { device_id: 'dev-1', revoked_at: null, revoked_by: 'account', proof: null, evidence: null };
+    const error = SDKError.fromResponse(403, { error: 'this device was revoked', code: AuthCode.DeviceRevoked, revocation });
+
+    expect(error).toBeInstanceOf(RevokedDeviceError);
+    expect(error).not.toBeInstanceOf(ScopeError);
+    expect(error.httpStatus).toBe(403);
+    expect(error.details.revocation).toEqual(revocation);
   });
 
   it('keeps a plain AuthError for the other 401 causes', () => {

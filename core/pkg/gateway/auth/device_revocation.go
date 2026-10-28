@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,10 +47,12 @@ const (
 	RevokedByAccount RevokedBy = "account"
 	// RevokedByOperator is a namespace operator (/v1/namespace/devices).
 	RevokedByOperator RevokedBy = "operator"
-	// RevokedByFunction is one of the namespace's functions (deny_device).
+	// RevokedByFunction is one of the namespace's functions (deny_device,
+	// deny_device_with_evidence).
 	RevokedByFunction RevokedBy = "function"
-	// RevokedByUnrecorded is a device revoked before the gateway kept who
-	// revoked it (migration 100).
+	// RevokedByUnrecorded is a device whose revocation the gateway holds no
+	// record of: revoked before it kept one (migration 100), or one the
+	// revocation list holds revoked whose row is gone.
 	RevokedByUnrecorded RevokedBy = "unrecorded"
 )
 
@@ -187,6 +190,43 @@ type DeviceRevokedError struct {
 func (e *DeviceRevokedError) Error() string { return ErrDeviceRevoked.Error() }
 
 func (e *DeviceRevokedError) Unwrap() error { return ErrDeviceRevoked }
+
+// DeviceTokenRevokedError is ErrTokenRevoked for a token refused because the
+// device it is bound to was revoked. errors.Is(err, ErrTokenRevoked) holds
+// for it, so a refusal that does not tell the two apart still refuses it.
+// Claims are the refused token's, verified but for the revocation: they name
+// the device whose revocation the refusal shows (Service.DeviceRevocationRecord).
+type DeviceTokenRevokedError struct {
+	Claims *JWTClaims
+}
+
+func (e *DeviceTokenRevokedError) Error() string {
+	return "token revoked: the device it is bound to was revoked"
+}
+
+func (e *DeviceTokenRevokedError) Unwrap() error { return ErrTokenRevoked }
+
+// DeviceRevocationRecord is the revocation of a device whose token the
+// revocation list refused, read from its tombstone. It is read only for a
+// request already refused for its device, never on a healthy one.
+//
+// A device the list holds revoked whose row holds no revocation (gone with a
+// deleted namespace, or not yet applied on this node) is reported
+// unrecorded: revoked, with no record of who revoked it, which is what this
+// gateway knows. A registry that cannot be read is an error, for the caller
+// to answer as retryable.
+func (s *Service) DeviceRevocationRecord(ctx context.Context, namespace, id string) (*DeviceRevocationRecord, error) {
+	d, err := s.Device(ctx, namespace, id)
+	switch {
+	case errors.Is(err, ErrDeviceNotFound):
+		return revocationRecord(id, time.Time{}, "", "", ""), nil
+	case err != nil:
+		return nil, fmt.Errorf("read the revocation of device %s: %w", id, err)
+	case d.Revocation == nil:
+		return revocationRecord(id, time.Time{}, "", "", ""), nil
+	}
+	return d.Revocation, nil
+}
 
 // revokedError is the refusal of a revoked device d.
 func revokedError(d *SessionDevice) error {

@@ -365,6 +365,10 @@ func (m *MockHostServices) DenyDevice(ctx context.Context, subject, device strin
 	return nil
 }
 
+func (m *MockHostServices) DenyDeviceWithEvidence(ctx context.Context, subject, device, evidence string) error {
+	return nil
+}
+
 func (m *MockHostServices) GetCallerCapability(ctx context.Context) string {
 	return ""
 }

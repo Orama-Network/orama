@@ -29,6 +29,21 @@ func (e *Engine) hDenyDevice(ctx context.Context, mod api.Module, subPtr, subLen
 	return e.admitDevice(ctx, mod, "deny_device", e.hostServices.DenyDevice, subPtr, subLen, devPtr, devLen)
 }
 
+// hDenyDeviceWithEvidence revokes a pending device of a subject and keeps the
+// function's evidence with its tombstone. Returns 1 on success, 0 on failure,
+// whose reason the gateway log records.
+func (e *Engine) hDenyDeviceWithEvidence(ctx context.Context, mod api.Module,
+	subPtr, subLen, devPtr, devLen, evPtr, evLen uint32) uint32 {
+	evidence, ok := e.executor.ReadFromGuest(mod, evPtr, evLen)
+	if !ok {
+		return 0
+	}
+	return e.admitDevice(ctx, mod, "deny_device_with_evidence",
+		func(ctx context.Context, subject, device string) error {
+			return e.hostServices.DenyDeviceWithEvidence(ctx, subject, device, string(evidence))
+		}, subPtr, subLen, devPtr, devLen)
+}
+
 func (e *Engine) admitDevice(ctx context.Context, mod api.Module, name string, decide func(context.Context, string, string) error,
 	subPtr, subLen, devPtr, devLen uint32) uint32 {
 	subject, ok1 := e.executor.ReadFromGuest(mod, subPtr, subLen)

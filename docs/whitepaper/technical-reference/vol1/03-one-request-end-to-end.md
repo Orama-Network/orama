@@ -108,6 +108,7 @@ The whole trace touched: one DNS lookup against the registry, two gateways, the 
 | Rate limit | bucket empty | 429 `RATE_LIMITED`, `Retry-After` |
 | Readiness | schema behind the binary | 503 with a reason (`initializing`, `schema`) |
 | Proxy credential | missing, invalid, expired, revoked | 401 `AUTH_MISSING`, `AUTH_INVALID_KEY`, `AUTH_EXPIRED`, `AUTH_REVOKED` |
+| Proxy credential | its device revoked | 403 `DEVICE_REVOKED` with the revocation, on a public route too |
 | Proxy credential | revocation list unreadable | 503 `AUTH_UNAVAILABLE`, `Retry-After: 2` |
 | Proxy credential | credential of another namespace | 403 `NAMESPACE_MISMATCH` |
 | Targets | registry read fails | 503 `SERVICE_UNAVAILABLE` |

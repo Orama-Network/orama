@@ -1226,8 +1226,9 @@ Under the device policy `function` ([Devices](/docs/developer/devices#devices-ad
 | `get_caller_device_state()` → string | `pending`, `active` or empty (see [Context](#context)). |
 | `approve_device(subject, device)` → bool | Makes `subject`'s pending `device` active in this function's namespace. The device's next `POST /v1/auth/refresh` returns a full session. True when the device is active afterwards (approving an active device changes nothing); false, with the reason in the gateway log, when the device is not the account's, is revoked, or the namespace's policy is not `function`. |
 | `deny_device(subject, device)` → bool | Revokes `subject`'s pending `device`: its session, sockets and tokens stop on every gateway within ten seconds and its key cannot sign in again. False for an active or unknown device, or a policy other than `function`. |
+| `deny_device_with_evidence(subject, device, evidence)` → bool | Denies as `deny_device` does and keeps `evidence` with the device's tombstone, verbatim: at most 16 KiB of UTF-8, such as an account-signed statement of why. The denied device is shown it in every `DEVICE_REVOKED` it is answered, with `revoked_by: "function"` ([What a revoked device is told](/docs/developer/devices#what-a-revoked-device-is-told)). False, and nothing denied, for evidence past the bound. |
 
-Strings come back packed as `ptr<<32 | len`, like the other `get_caller_*` calls; the two decisions return 1 or 0:
+Strings come back packed as `ptr<<32 | len`, like the other `get_caller_*` calls; the decisions return 1 or 0:
 
 ```go
 //go:wasmimport env get_caller_device_state
@@ -1238,9 +1239,12 @@ func approveDevice(subPtr, subLen, devPtr, devLen uint32) uint32
 
 //go:wasmimport env deny_device
 func denyDevice(subPtr, subLen, devPtr, devLen uint32) uint32
+
+//go:wasmimport env deny_device_with_evidence
+func denyDeviceWithEvidence(subPtr, subLen, devPtr, devLen, evPtr, evLen uint32) uint32
 ```
 
-Both act in the function's own namespace only, at most 16 times per invocation, and are recorded in the audit log as `auth.device.approve` / `auth.device.deny` by `function:<name>`. The gateway does not judge whether the approval is deserved: an open function that approves every caller lets any wallet signature add a device, so check what proves the request (a message signed by one of the account's active devices, the application's recovery secret) before approving.
+They act in the function's own namespace only, at most 16 times per invocation between them, and are recorded in the audit log as `auth.device.approve` / `auth.device.deny` by `function:<name>`. The gateway does not judge whether the approval is deserved: an open function that approves every caller lets any wallet signature add a device, so check what proves the request (a message signed by one of the account's active devices, the application's recovery secret) before approving.
 
 **With `invocable_by`.** Each rule is checked on every hop, on its own. A pending device that calls an open router, which calls a handler with `function_invoke`, is admitted to the handler only when the handler is open to pending devices too: a router cannot carry a pending session into a function that is closed to it. A handler that is open but `invocable_by: [rpc-router]` still refuses the pending device calling it directly, with `FUNCTION_NOT_DIRECTLY_INVOCABLE`. A pending session is never an admin, so it does not get the admin pass `internal` and `invocable_by` give.
 
@@ -1302,7 +1306,11 @@ opened it for as long as it stays open:
 
 - The gateway re-checks every open socket every 10 seconds. One whose token was
   revoked — the token, its session, or its subject — is closed with **`4403`**;
-  sign in again. One whose token expired more than two minutes ago is closed with
+  sign in again. One whose token's device was revoked is closed with **`4410`**:
+  the device can never hold a session again, and any request with the same
+  token answers `403 DEVICE_REVOKED` with the revocation, which the client
+  checks before it acts ([What a revoked device is told](/docs/developer/devices#what-a-revoked-device-is-told)).
+  One whose token expired more than two minutes ago is closed with
   **`4401`**; reconnect with a fresh token. A persistent socket also refuses an
   application frame past that point without waiting for the next check.
 - A persistent socket stays open across token rotation with a control frame,
@@ -1315,7 +1323,9 @@ opened it for as long as it stays open:
 
   The new token must be for the **same subject**, namespace and device the
   socket was opened with; any other is refused with `ok:false` and the socket keeps its
-  current token. A socket opened with an API key, or with no credential on a
+  current token. A token refused because its device was revoked is acked
+  `{"__orama_ack":"auth.refresh","ok":false,"code":"DEVICE_REVOKED","revocation":{…},"error":"…"}`,
+  with the revocation a `403 DEVICE_REVOKED` carries. A socket opened with an API key, or with no credential on a
   public function, has no token and cannot take one on — reconnect instead.
 - A socket opened with an API key is held to the key: revoking the key closes
   its open sockets with `4403` ("API key revoked") within ten seconds, and

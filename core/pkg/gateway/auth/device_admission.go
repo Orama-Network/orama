@@ -150,16 +150,27 @@ func (s *Service) ApprovePendingDevice(ctx context.Context, namespace, subject, 
 // restricted session ends and its access tokens and sockets stop on every
 // gateway within the revocation list's staleness. It refuses a device that is
 // not pending — an active device is its account's to revoke, or an operator's.
-func (s *Service) DenyPendingDevice(ctx context.Context, namespace, subject, id, approver string) error {
+//
+// evidence is what the function attaches for the application to check
+// (deny_device_with_evidence), kept with the tombstone and shown verbatim in
+// the device's DEVICE_REVOKED refusals; "" is none (deny_device). It is held
+// to the bound every revocation's evidence is (ValidRevocationEvidence).
+func (s *Service) DenyPendingDevice(ctx context.Context, namespace, subject, id, approver, evidence string) error {
+	how := DeviceRevocation{By: RevokedByFunction, Evidence: evidence}
+	by, _, storedEvidence, err := how.stored()
+	if err != nil {
+		return err
+	}
 	subject = NormalizeWallet(subject)
 	nsID, err := s.functionAdmission(ctx, namespace)
 	if err != nil {
 		return err
 	}
 	res, err := s.db.Exec(client.WithInternalAuth(ctx),
-		`UPDATE session_devices SET state = 'revoked', revoked_at = datetime('now'), revoked_by = ?
+		`UPDATE session_devices
+		    SET state = 'revoked', revoked_at = datetime('now'), revoked_by = ?, revocation_evidence = ?
 		  WHERE id = ? AND namespace_id = ? AND subject = ? AND state = 'pending'`,
-		string(RevokedByFunction), id, nsID, subject)
+		by, storedEvidence, id, nsID, subject)
 	if err != nil {
 		return fmt.Errorf("deny device %s: %w", id, err)
 	}

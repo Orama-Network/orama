@@ -154,7 +154,7 @@ type HostFunctions struct {
 
 	// deviceAdmitter approves and denies the namespace's pending devices
 	// (device_admission.go). Set once at gateway start via SetDeviceAdmitter;
-	// nil means approve_device and deny_device fail and say why.
+	// nil means approve_device, deny_device and deny_device_with_evidence fail and say why.
 	deviceAdmitter DeviceAdmitter
 }
 

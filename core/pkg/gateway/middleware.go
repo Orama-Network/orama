@@ -333,6 +333,40 @@ func decodeHopAttestation(raw string) (*auth.AttestationClaim, error) {
 // tells a revoked session from an unknown credential (namespaceProxyAuthCode).
 const sessionRevokedMessage = "this session was ended, or the key it came from was revoked"
 
+// deviceRevokedMessage is what a token refused because its device was revoked
+// says. validateAuthForNamespaceProxy returns it with the refused token's
+// claims, and the refusal is answered by refuseRevokedDevice.
+const deviceRevokedMessage = "this device was revoked; it cannot sign in or hold a session again"
+
+// refuseRevokedDevice answers a token refused because its device was revoked:
+// 403 DEVICE_REVOKED with the device's revocation, for the client to check
+// before it acts on it. The revocation is read here, for a request already
+// refused, never on a healthy one; a registry that cannot be read is a
+// retryable 503, as a revocation list that cannot be read is.
+func (g *Gateway) refuseRevokedDevice(w http.ResponseWriter, r *http.Request, claims *auth.JWTClaims) {
+	rec, err := g.authService.DeviceRevocationRecord(r.Context(), claims.Namespace, claims.Did)
+	if err != nil {
+		g.logger.ComponentWarn("gateway", "could not read a revoked device's revocation",
+			zap.String("device_id", claims.Did), zap.Error(err))
+		unavailable(w, CodeAuthUnavailable, authUnavailableMessage)
+		return
+	}
+	forbidden(w, CodeDeviceRevoked, deviceRevokedMessage, map[string]any{"revocation": rec})
+}
+
+// refuseProxyCredential answers a credential validateAuthForNamespaceProxy
+// refused (errMsg); claims are what it returned beside the refusal.
+func (g *Gateway) refuseProxyCredential(w http.ResponseWriter, r *http.Request, errMsg string, claims *auth.JWTClaims) {
+	switch errMsg {
+	case deviceRevokedMessage:
+		g.refuseRevokedDevice(w, r, claims)
+	case authUnavailableMessage:
+		unavailable(w, CodeAuthUnavailable, errMsg)
+	default:
+		unauthorized(w, namespaceProxyAuthCode(errMsg), errMsg, nil)
+	}
+}
+
 // authUnavailableMessage is what a request answers when whether its credential
 // was revoked cannot be told (auth.ErrRevocationsUnavailable). The namespace
 // proxy carries a refusal as a message, so this is also how it is told apart
@@ -367,6 +401,9 @@ func namespaceProxyAuthCode(errMsg string) string {
 // namespace gateways (which have isolated RQLites without API keys).
 //
 // Returns:
+//   - ("", claims, deviceRevokedMessage) if the token was refused because its
+//     device was revoked: claims are the refused token's, which name the
+//     device (refuseRevokedDevice).
 //   - (namespace, claims, "") if auth is valid via JWT — claims may be used to
 //     populate internal-auth headers so the namespace gateway can hydrate
 //     `caller_jwt_subject` for serverless host functions (bug #215).
@@ -394,6 +431,12 @@ func (g *Gateway) validateAuthForNamespaceProxy(r *http.Request) (namespace stri
 				}
 				// A revoked token is not an absent one: falling through would
 				// have the request answered "no credential was presented".
+				// One refused for its device carries its claims, which name
+				// the device whose revocation the refusal shows.
+				var revokedDevice *auth.DeviceTokenRevokedError
+				if errors.As(err, &revokedDevice) {
+					return "", revokedDevice.Claims, keyAuthority{}, deviceRevokedMessage
+				}
 				if errors.Is(err, auth.ErrTokenRevoked) {
 					return "", nil, keyAuthority{}, sessionRevokedMessage
 				}
@@ -427,6 +470,10 @@ func (g *Gateway) validateAuthForNamespaceProxy(r *http.Request) (namespace stri
 					}
 					return ns, c, key, ""
 				}
+			}
+			var revokedDevice *auth.DeviceTokenRevokedError
+			if errors.As(err, &revokedDevice) {
+				return "", revokedDevice.Claims, keyAuthority{}, deviceRevokedMessage
 			}
 			if errors.Is(err, auth.ErrTokenRevoked) {
 				return "", nil, keyAuthority{}, sessionRevokedMessage
@@ -974,6 +1021,26 @@ func (g *Gateway) loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// refuseRevokedToken answers a token the revocation list refused, and reports
+// whether it did. A token refused because its device was revoked is answered
+// DEVICE_REVOKED with the device's revocation on every route, public ones
+// included: served as anonymous, the device would go on working with nothing
+// telling it it was revoked. The main gateway in front of a namespace refuses
+// it the same way (proxyToNamespaceGateway). Any other revoked token is
+// AUTH_REVOKED, on a route that is not public.
+func (g *Gateway) refuseRevokedToken(w http.ResponseWriter, r *http.Request, err error, isPublic bool) bool {
+	var revokedDevice *auth.DeviceTokenRevokedError
+	switch {
+	case errors.As(err, &revokedDevice):
+		g.refuseRevokedDevice(w, r, revokedDevice.Claims)
+		return true
+	case isPublic || !errors.Is(err, auth.ErrTokenRevoked):
+		return false
+	}
+	unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+	return true
+}
+
 // authMiddleware enforces auth when enabled via config.
 // Accepts:
 //   - Authorization: Bearer <JWT> (RS256 / EdDSA issued by this gateway)
@@ -1078,8 +1145,7 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 					// would have it looked up as an API key and refused as an
 					// unknown credential, which tells the holder nothing about
 					// why their session stopped working.
-					if errors.Is(err, auth.ErrTokenRevoked) && !isPublic {
-						unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+					if g.refuseRevokedToken(w, r, err, isPublic) {
 						return
 					}
 					if errors.Is(err, auth.ErrRevocationsUnavailable) && !isPublic {
@@ -1123,6 +1189,9 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 			// Anything larger is either malformed or a DoS attempt.
 			if tok != "" && len(tok) <= maxQueryJWTLength && strings.Count(tok, ".") == 2 {
 				claims, err := g.authService.ParseAndVerifyJWT(tok)
+				if g.refuseRevokedToken(w, r, err, isPublic) {
+					return
+				}
 				if errors.Is(err, auth.ErrRevocationsUnavailable) && !isPublic {
 					unavailable(w, CodeAuthUnavailable, authUnavailableMessage)
 					return
@@ -1812,7 +1881,9 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 	//      (presence of relevant query params, headers we care about,
 	//      and the actor IP). Logged at debug level for success and
 	//      warn for the reject path so steady-state noise stays low.
-	if authErr != "" && !isPublic {
+	// A revoked device's token is refused on a public route too
+	// (refuseRevokedToken says why).
+	if authErr != "" && (!isPublic || authErr == deviceRevokedMessage) {
 		if isWS {
 			g.logger.ComponentWarn(logging.ComponentGeneral,
 				"namespace-proxy WS upgrade rejected: auth error",
@@ -1830,11 +1901,7 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 				zap.String("user_agent", r.Header.Get("User-Agent")),
 			)
 		}
-		if authErr == authUnavailableMessage {
-			unavailable(w, CodeAuthUnavailable, authErr)
-			return
-		}
-		unauthorized(w, namespaceProxyAuthCode(authErr), authErr, nil)
+		g.refuseProxyCredential(w, r, authErr, validatedClaims)
 		return
 	}
 

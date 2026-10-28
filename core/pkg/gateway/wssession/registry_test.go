@@ -12,12 +12,18 @@ import (
 	"github.com/Orama-Network/orama/core/pkg/gateway/auth"
 )
 
-// revokedJTIs denies the tokens it names.
+// revokedJTIs denies the tokens it names, and every token bound to a device
+// it names as "device:<id>".
 type revokedJTIs map[string]bool
 
-func (d revokedJTIs) Revoked(c *auth.JWTClaims) (bool, error) { return d[c.Jti], nil }
-func (d revokedJTIs) RefreshRevocations(context.Context)      {}
-func (d revokedJTIs) RevocationsUsable() bool                 { return true }
+func (d revokedJTIs) Revoked(c *auth.JWTClaims) (bool, error) {
+	return d[c.Jti] || d.DeviceRevoked(c), nil
+}
+func (d revokedJTIs) RefreshRevocations(context.Context) {}
+func (d revokedJTIs) RevocationsUsable() bool            { return true }
+func (d revokedJTIs) DeviceRevoked(c *auth.JWTClaims) bool {
+	return c.Did != "" && d["device:"+c.Did]
+}
 
 // RevokedKey denies the keys it names as "key:<id>".
 func (d revokedJTIs) RevokedKey(id int64) (bool, error) { return d[fmt.Sprintf("key:%d", id)], nil }
@@ -100,6 +106,41 @@ func TestSweep_closesASocketWhoseTokenWasRevoked(t *testing.T) {
 	}
 	if len(other.got()) != 0 {
 		t.Error("a socket whose token was not revoked was closed")
+	}
+}
+
+// feat-976: a token-opened socket refused because its device was revoked is
+// closed with CloseDeviceRevoked, which tells the client where to read the
+// revocation; a capability socket the same device issued is closed with
+// CloseRevoked, since its holder is not that device.
+func TestSweep_aRevokedDeviceClosesItsSocketsSayingSo(t *testing.T) {
+	r := NewRegistry(nil)
+	var device, capability, session closeLog
+	var reason string
+	onDevice := token("d", now.Add(time.Minute))
+	onDevice.Did = "dev-1"
+	r.Register(onDevice, func(code int, why string) { reason = why; device.closer()(code, why) })
+	issued := token("cap", now.Add(time.Minute))
+	issued.Did = "dev-1"
+	r.RegisterCapability(issued, capability.closer())
+	r.Register(token("gone", now.Add(time.Minute)), session.closer())
+
+	if n := r.Sweep(now, revokedJTIs{"device:dev-1": true, "gone": true}); n != 3 {
+		t.Fatalf("closed %d sockets, want 3", n)
+	}
+	if got := device.got(); len(got) != 1 || got[0] != CloseDeviceRevoked || reason != ReasonDeviceRevoked {
+		t.Errorf("the revoked device's socket closed with %v %q, want %d %q", got, reason, CloseDeviceRevoked, ReasonDeviceRevoked)
+	}
+	if got := capability.got(); len(got) != 1 || got[0] != CloseRevoked {
+		t.Errorf("the device's capability socket closed with %v, want [%d]: its holder is not the device", got, CloseRevoked)
+	}
+	if got := session.got(); len(got) != 1 || got[0] != CloseRevoked {
+		t.Errorf("a revoked session's socket closed with %v, want [%d]", got, CloseRevoked)
+	}
+	// RFC 6455 §5.5: a control frame's payload is at most 125 bytes, two of
+	// them the code.
+	if len(ReasonDeviceRevoked) > 123 {
+		t.Errorf("ReasonDeviceRevoked is %d bytes; a close frame holds 123", len(ReasonDeviceRevoked))
 	}
 }
 
@@ -224,6 +265,8 @@ func (d *countingDenier) RefreshRevocations(context.Context) {
 func (d *countingDenier) RevocationsUsable() bool { return true }
 
 func (d *countingDenier) RevokedKey(int64) (bool, error) { return false, nil }
+
+func (d *countingDenier) DeviceRevoked(*auth.JWTClaims) bool { return false }
 
 func (d *countingDenier) Revoked(c *auth.JWTClaims) (bool, error) {
 	d.mu.Lock()
@@ -361,6 +404,8 @@ func (d *unavailableDenier) RevocationsUsable() bool {
 func (d *unavailableDenier) RevokedKey(int64) (bool, error) {
 	return false, auth.ErrRevocationsUnavailable
 }
+
+func (d *unavailableDenier) DeviceRevoked(*auth.JWTClaims) bool { return false }
 
 func (d *unavailableDenier) Revoked(*auth.JWTClaims) (bool, error) {
 	atomic.AddInt32(&d.asked, 1)

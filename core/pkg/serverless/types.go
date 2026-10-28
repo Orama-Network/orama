@@ -835,6 +835,10 @@ type HostServices interface {
 	ApproveDevice(ctx context.Context, subject, device string) error
 	// DenyDevice revokes a pending device of subject in the calling namespace.
 	DenyDevice(ctx context.Context, subject, device string) error
+	// DenyDeviceWithEvidence revokes as DenyDevice does and keeps evidence
+	// (at most 16 KiB of UTF-8) with the device's tombstone, shown verbatim in
+	// its DEVICE_REVOKED refusals (feat-976).
+	DenyDeviceWithEvidence(ctx context.Context, subject, device, evidence string) error
 	// GetCallerCapability returns what the caller's capability grants, as
 	// JSON, or empty when the caller came in on a credential.
 	GetCallerCapability(ctx context.Context) string

@@ -711,12 +711,20 @@ func (s *Service) RefreshToken(ctx context.Context, refreshToken, namespace stri
 			// already consumed — a real bad token. One that was issued and
 			// has since been spent is a replay, and is told apart so the
 			// handler records it: only a concurrent race used to be.
-			spent, serr := s.refreshTokenSpent(internalCtx, ormDB, nsID, hashedRefresh)
+			spent, deviceID, serr := s.refreshTokenSpent(internalCtx, ormDB, nsID, hashedRefresh)
 			if serr != nil {
 				s.logger.ComponentWarn(logging.ComponentGeneral,
 					"refresh replay check failed (transient rqlite error, surfacing retryable)",
 					zap.String("namespace", namespace), zap.Error(serr))
 				return "", "", "", 0, ErrRefreshTransient
+			}
+			// Revoking a device revokes its refresh tokens. A revoked token of
+			// a revoked device is refused for the device, with its
+			// revocation (DEVICE_REVOKED), not as a replay.
+			if spent && deviceID != "" {
+				if err := s.refusedForDevice(ctx, namespace, deviceID); err != nil {
+					return "", "", "", 0, err
+				}
 			}
 			if spent {
 				s.logger.ComponentWarn(logging.ComponentGeneral,
@@ -914,14 +922,33 @@ func (s *Service) lookupReuseGrace(ctx context.Context, ormDB client.DatabaseCli
 // namespace and has since been revoked — rotated away, or ended by a logout. A
 // token nobody ever issued, or one that merely expired, is not: presenting it is
 // a mistake, and presenting a spent one is what a stolen token looks like.
-func (s *Service) refreshTokenSpent(ctx context.Context, ormDB client.DatabaseClient, nsID interface{}, hashedRefresh string) (bool, error) {
+func (s *Service) refreshTokenSpent(ctx context.Context, ormDB client.DatabaseClient, nsID interface{}, hashedRefresh string) (bool, string, error) {
 	res, err := ormDB.Query(ctx,
-		`SELECT 1 FROM refresh_tokens WHERE namespace_id = ? AND token = ? AND revoked_at IS NOT NULL LIMIT 1`,
+		`SELECT COALESCE(device_id, '') FROM refresh_tokens WHERE namespace_id = ? AND token = ? AND revoked_at IS NOT NULL LIMIT 1`,
 		nsID, hashedRefresh)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	return res != nil && res.Count > 0 && len(res.Rows) > 0, nil
+	if res == nil || res.Count == 0 || len(res.Rows) == 0 || len(res.Rows[0]) == 0 {
+		return false, "", nil
+	}
+	return true, getStringVal(res.Rows[0][0]), nil
+}
+
+// refusedForDevice is the refusal of a revoked refresh token bound to
+// deviceID when that device is revoked (a DeviceRevokedError), nil when it is
+// not, and ErrRefreshTransient when the device cannot be read.
+func (s *Service) refusedForDevice(ctx context.Context, namespace, deviceID string) error {
+	d, err := s.Device(ctx, namespace, deviceID)
+	switch {
+	case errors.Is(err, ErrDeviceNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("%w: read the token's device: %v", ErrRefreshTransient, err)
+	case d.State == DeviceStateRevoked:
+		return revokedError(d)
+	}
+	return nil
 }
 
 // claimReuseGrace spends a rotated token's reuse grace: a single-use CAS.

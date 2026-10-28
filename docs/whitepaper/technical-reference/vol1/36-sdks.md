@@ -135,6 +135,7 @@ Every failure is an `SDKError` with `httpStatus`, `code` and `details` (`sdk/src
 | 401 with `AUTH_REVOKED` | `RevokedCredentialError` (an `AuthError`) | answer is to sign in again |
 | any other 401 | `AuthError` | `requiredScope` |
 | 403 with `NAMESPACE_MISMATCH` | `NamespaceError` | `namespace`, `credentialNamespace` |
+| 403 with `DEVICE_REVOKED` | `RevokedDeviceError` | `details.revocation`, for `verifyDeviceRevocation` |
 | any other 403 | `ScopeError` | `requiredScope` from `required_scope` |
 | 404 | `NotFoundError` | |
 | no HTTP response | `NetworkError`, `httpStatus` 0 | code `NETWORK_ERROR`, `TIMEOUT` or `ABORTED` |
@@ -312,11 +313,13 @@ The Go `Client` and every sub-client are safe to share between goroutines: confi
 | Gateway answers 503 `AUTH_UNAVAILABLE` (revocation list stale) | retried, `Retry-After: 2` honoured | success after a short wait, or `SDKError` with `retryable: true` |
 | 401, access token expired | TS: refresh or re-exchange, replay once. `uploadFile` and `getBinary` do not renew | transparent for `request`; `AuthError` on upload and download for a user JWT |
 | 401 `AUTH_REVOKED` | `RevokedCredentialError`; renewal fails | sign in again |
+| 403 `DEVICE_REVOKED` on any request of a revoked device | `RevokedDeviceError`; not renewed (only a 401 is) | check `details.revocation` before erasing anything |
 | 403 `NAMESPACE_MISMATCH` | `NamespaceError` with both namespaces | the URL or the key is from the wrong environment |
 | 403 `INSUFFICIENT_SCOPE` | `ScopeError.requiredScope` names the grant | mint a key with that grant |
 | Read right after upload: 404 | TS `get` and `fetchWith` re-ask for up to 18 s. Go `Storage().Get` does not | success after propagation, or `NotFoundError` |
 | WebSocket drops | reconnect up to 10 times; handlers not told | gap in messages; no replay |
 | WebSocket closed with 4401 or 4403 | treated as a drop; reconnect refused with the same token; after 10 attempts the close handler fires | subscription ends about 3 min after the gateway closed it |
+| WebSocket closed with 4410 (`WSCloseCode.DeviceRevoked`) | final: no reconnect, the close handler fires at once | the device was revoked; any request with the token answers `DEVICE_REVOKED` with the revocation |
 | Relay fails | `RelayError`; no direct retry | `RELAY_CONNECT_FAILED`, `RELAY_UNAVAILABLE`, `RATE_LIMITED` |
 | Storage node refuses the capability | `FetchCapError`; retrying the same token cannot succeed | `FETCH_CAP_INVALID` or `FETCH_CAP_REVOKED` |
 | Chain simulate or broadcast refused | `ChainTxRefusedError`, status 422 | `chainCode`, `codespace`, `log` |

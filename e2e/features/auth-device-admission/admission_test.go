@@ -16,8 +16,10 @@ import (
 // signs in to a full session; a later one to a restricted session that reaches
 // its own session and the functions open to pending devices, and nothing else;
 // one of the namespace's functions approves it (its next refresh is a full
-// session) or denies it (its session ends on every gateway); an account whose
-// devices were all revoked recovers through the function too.
+// session) or denies it with its evidence (its session ends on every gateway,
+// and its token and refresh token are answered DEVICE_REVOKED with the
+// function's revocation and evidence); an account whose devices were all
+// revoked recovers through the function too.
 func TestFunctionPolicy_aFunctionAdmitsTheAccountsLaterDevices(t *testing.T) {
 	fx := setup(t)
 	phone := gw.NewDevice(t, wallet.AlgEd25519)
@@ -100,14 +102,25 @@ func TestFunctionPolicy_aFunctionAdmitsTheAccountsLaterDevices(t *testing.T) {
 		if third.DeviceState != statePending {
 			t.Fatalf("a third device signed in %q, want pending", third.DeviceState)
 		}
-		if !decide(t, fx, first.AccessToken, "deny", third.Subject, tablet.ID()) {
-			t.Fatal("deny_device refused the account's pending device")
+		const evidence = `{"denied_by":"recovery-check","v":1}`
+		if !denyWithEvidence(t, fx, first.AccessToken, third.Subject, tablet.ID(), evidence) {
+			t.Fatal("deny_device_with_evidence refused the account's pending device")
 		}
-		eventually.Require(t, pollEvery, revocationBudget, "the denied device's token is refused", func() (bool, error) {
-			return call(t, fx, admitFn, third.AccessToken, nil).Status == http.StatusUnauthorized, nil
+		var rec *revocation
+		eventually.Require(t, pollEvery, revocationBudget, "the denied device's token is refused DEVICE_REVOKED", func() (bool, error) {
+			resp := call(t, fx, admitFn, third.AccessToken, nil)
+			rec = deviceRevoked(resp)
+			return rec != nil, nil
 		})
-		if next, resp := refresh(t, fx, third, tablet); next != nil {
+		if rec.DeviceID != tablet.ID() || rec.RevokedBy != "function" || string(rec.Proof) != "null" || rec.Evidence == nil || *rec.Evidence != evidence {
+			t.Errorf("the denied device's revocation reads %+v, want the function's, unproven, with its evidence", rec)
+		}
+		next, resp := refresh(t, fx, third, tablet)
+		if next != nil {
 			t.Fatalf("a denied device refreshed its session: %d %s", resp.Status, resp.Body)
+		}
+		if r := deviceRevoked(resp); r == nil || r.Evidence == nil || *r.Evidence != evidence {
+			t.Errorf("a denied device's refresh: %d %.400s, want DEVICE_REVOKED with the function's evidence", resp.Status, resp.Body)
 		}
 		if decide(t, fx, first.AccessToken, "deny", third.Subject, phone.ID()) {
 			t.Error("deny_device revoked an active device")

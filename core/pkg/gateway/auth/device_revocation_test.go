@@ -126,7 +126,7 @@ func TestRevokeDevice_unsignedRevocationsSayWhoAndCarryNoProof(t *testing.T) {
 	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, byWallet.id, byAccount); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, pending.ID, "function:join"); err != nil {
+	if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, pending.ID, "function:join", "join-refused-v1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.db.Exec(`UPDATE session_devices SET state = 'revoked', revoked_at = datetime('now') WHERE id = ?`, legacy.id); err != nil {
@@ -146,6 +146,37 @@ func TestRevokeDevice_unsignedRevocationsSayWhoAndCarryNoProof(t *testing.T) {
 	if rec := revokedRecord(t, err); rec.Evidence == nil || *rec.Evidence != "roster-v9" {
 		t.Errorf("the operator's evidence was not kept: %v", rec.Evidence)
 	}
+	_, err = s.RequireSessionDevice(ctx, "anchat", deviceOwner, pending.ID)
+	if rec := revokedRecord(t, err); rec.Evidence == nil || *rec.Evidence != "join-refused-v1" {
+		t.Errorf("the function's evidence was not kept: %v", rec.Evidence)
+	}
+}
+
+// Property: a function's evidence is held to the same bound as any other
+// revocation's, and a denial refused for it leaves the device pending.
+func TestDenyPendingDevice_evidencePastTheBoundDeniesNothing(t *testing.T) {
+	s, _, _ := realRegistry(t)
+	ctx := context.Background()
+	if _, err := s.SetDevicePolicy(ctx, "anchat", DevicePolicyFunction, "0xowner"); err != nil {
+		t.Fatal(err)
+	}
+	mustEnrol(t, s, deviceOwner, ed25519Device(t), DeviceStateActive)
+	key, _ := ParseDeviceKey([]byte(ed25519Device(t).jwk))
+	pending, err := s.EnrolFirstOrPendingDevice(ctx, "anchat", deviceOwner, key, "")
+	if err != nil || pending.State != DeviceStatePending {
+		t.Fatalf("pending device: %+v %v", pending, err)
+	}
+	for name, evidence := range map[string]string{
+		"past the bound": strings.Repeat("e", MaxRevocationEvidenceBytes+1),
+		"not UTF-8":      "\xff",
+	} {
+		if err := s.DenyPendingDevice(ctx, "anchat", deviceOwner, pending.ID, "function:join", evidence); !errors.Is(err, ErrRevocationEvidenceInvalid) {
+			t.Errorf("evidence %s: %v, want ErrRevocationEvidenceInvalid", name, err)
+		}
+	}
+	if d, err := s.RequireSessionDevice(ctx, "anchat", deviceOwner, pending.ID); err != nil || d.State != DeviceStatePending {
+		t.Errorf("a refused denial changed the device: %+v %v", d, err)
+	}
 }
 
 // Property: a revocation that is not what it claims to be stores nothing and
@@ -157,11 +188,11 @@ func TestRevokeDevice_refusesAMalformedRecord(t *testing.T) {
 	mustEnrol(t, s, deviceOwner, lost, DeviceStateActive)
 	for name, how := range map[string]DeviceRevocation{
 		"a device's without its proof": {By: RevokedByDevice},
-		"an operator's with a proof":    {By: RevokedByOperator, Proof: &RevocationProof{}},
-		"an unknown kind":               {By: "gateway"},
-		"no kind":                       {},
-		"evidence past the bound":       {By: RevokedByOperator, Evidence: strings.Repeat("e", MaxRevocationEvidenceBytes+1)},
-		"evidence that is not UTF-8":    {By: RevokedByOperator, Evidence: "\xff\xfe"},
+		"an operator's with a proof":   {By: RevokedByOperator, Proof: &RevocationProof{}},
+		"an unknown kind":              {By: "gateway"},
+		"no kind":                      {},
+		"evidence past the bound":      {By: RevokedByOperator, Evidence: strings.Repeat("e", MaxRevocationEvidenceBytes+1)},
+		"evidence that is not UTF-8":   {By: RevokedByOperator, Evidence: "\xff\xfe"},
 	} {
 		if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id, how); err == nil {
 			t.Errorf("%s was stored", name)
@@ -173,5 +204,65 @@ func TestRevokeDevice_refusesAMalformedRecord(t *testing.T) {
 	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id,
 		DeviceRevocation{By: RevokedByOperator, Evidence: strings.Repeat("e", MaxRevocationEvidenceBytes)}); err != nil {
 		t.Errorf("evidence at the bound was refused: %v", err)
+	}
+}
+
+// feat-976: a token refused because its device was revoked is told apart from
+// one refused for its session, so the refusal can carry the device's
+// revocation; it is still ErrTokenRevoked to whatever does not tell them
+// apart.
+func TestParseAndVerifyJWT_aRevokedDevicesTokenNamesItsDevice(t *testing.T) {
+	s, _, _ := realRegistry(t)
+	ctx := context.Background()
+	lost := ed25519Device(t)
+	mustEnrol(t, s, deviceOwner, lost, DeviceStateActive)
+	onDevice, _, err := s.GenerateBoundJWT("anchat", deviceOwner, AccessTokenLifetime, nil, SessionBinding{DeviceID: lost.id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unbound, _, err := s.GenerateBoundJWT("anchat", deviceOwner, AccessTokenLifetime, nil, SessionBinding{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id,
+		DeviceRevocation{By: RevokedByAccount, Evidence: "roster-v8"}); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	_, err = s.ParseAndVerifyJWT(onDevice)
+	var revoked *DeviceTokenRevokedError
+	if !errors.As(err, &revoked) || !errors.Is(err, ErrTokenRevoked) {
+		t.Fatalf("err = %v, want a DeviceTokenRevokedError that is ErrTokenRevoked", err)
+	}
+	if revoked.Claims.Did != lost.id || revoked.Claims.Namespace != "anchat" || !s.DeviceRevoked(revoked.Claims) {
+		t.Errorf("claims %+v do not name the revoked device", revoked.Claims)
+	}
+	rec, err := s.DeviceRevocationRecord(ctx, "anchat", lost.id)
+	if err != nil || rec.RevokedBy != RevokedByAccount || rec.Evidence == nil || *rec.Evidence != "roster-v8" {
+		t.Errorf("record %+v (%v), want the account's revocation with its evidence", rec, err)
+	}
+
+	claims, err := s.ParseAndVerifyJWT(unbound)
+	if err != nil {
+		t.Fatalf("a token bound to no device was refused: %v", err)
+	}
+	if err := s.RevokeSession(ctx, claims); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ParseAndVerifyJWT(unbound); !errors.Is(err, ErrTokenRevoked) || errors.As(err, &revoked) {
+		t.Errorf("a revoked session's token: %v, want plain ErrTokenRevoked", err)
+	}
+	if s.DeviceRevoked(claims) {
+		t.Error("a token bound to no device reported its device revoked")
+	}
+}
+
+// A device the list holds revoked whose row is gone is reported revoked, with
+// no record of who revoked it, which is what the gateway knows.
+func TestDeviceRevocationRecord_aDeviceWithNoRowIsUnrecorded(t *testing.T) {
+	s, _, _ := realRegistry(t)
+	rec, err := s.DeviceRevocationRecord(context.Background(), "anchat", "gone")
+	if err != nil || rec.DeviceID != "gone" || rec.RevokedBy != RevokedByUnrecorded || rec.Proof != nil {
+		t.Errorf("record %+v (%v), want an unrecorded revocation of gone", rec, err)
 	}
 }

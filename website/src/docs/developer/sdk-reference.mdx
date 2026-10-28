@@ -213,7 +213,7 @@ const subscription = await client.pubsub.subscribe("room:general", {
 subscription.close();
 ```
 
-`data` is lossy for a payload that is not text; read `bytes` for anything binary. A dropped connection is re-established with exponential backoff (ten attempts by default) and the subscription resumes; `onClose` fires only when it is finished for good. Presence is opt-in:
+`data` is lossy for a payload that is not text; read `bytes` for anything binary. A dropped connection is re-established with exponential backoff (ten attempts by default) and the subscription resumes; `onClose` fires only when it is finished for good. A socket the gateway closed with `4410` (`WSCloseCode.DeviceRevoked`: this device was revoked) is not reconnected, and `onClose` fires at once. Presence is opt-in:
 
 ```ts
 await client.pubsub.subscribe("room:general", {
@@ -347,6 +347,7 @@ Every failure is an `SDKError`.
 |---|---|---|
 | `AuthError` | 401: credential missing, expired, or not enough alone | `requiredScope` |
 | `RevokedCredentialError` | 401 `AUTH_REVOKED`: sign in again, do not retry | |
+| `RevokedDeviceError` | 403 `DEVICE_REVOKED` on any request: this device was revoked and can never sign in again. Check `deviceRevocationOf(err)` with `verifyDeviceRevocation` before erasing anything | `details.revocation` |
 | `ScopeError` | 403: the credential's grants do not cover the operation | `requiredScope` |
 | `NamespaceError` | 403 `NAMESPACE_MISMATCH`: wrong gateway, or the key came from the wrong environment | `namespace`, `credentialNamespace` |
 | `AttestationError` | An attestation code (`ATTESTATION_*`, `APP_UPDATE_REQUIRED`), whatever the status: the device has not attested, its proof was refused, the build is too old, or an attest call could not be served | |
