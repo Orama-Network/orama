@@ -818,6 +818,10 @@ type HostServices interface {
 	// from device (any device when empty), and returns the admission as JSON
 	// {"room","user_id","device_id","expires_at"}.
 	WebRTCAdmit(ctx context.Context, room, user, device string, ttl time.Duration) (string, error)
+	// WebRTCAdmitWithMutes is WebRTCAdmit stating the user's audio and video
+	// mutes in room, written with the admission, and returns it as JSON
+	// {"room","user_id","device_id","expires_at","muted","video_muted"}.
+	WebRTCAdmitWithMutes(ctx context.Context, room, user, device string, ttl time.Duration, mutes WebRTCMutes) (string, error)
 	// WebRTCKick revokes user's admissions to room and closes their connection.
 	WebRTCKick(ctx context.Context, room, user string) error
 	// WebRTCKickDevice revokes the admission of one device of user to room and
@@ -865,11 +869,18 @@ type DeployResult struct {
 // the calling function runs in; a function never names another.
 type WebRTCController interface {
 	Admit(ctx context.Context, namespace, room, user, device string, ttl time.Duration) (time.Time, error)
+	AdmitWithMutes(ctx context.Context, namespace, room, user, device string, ttl time.Duration, mutes WebRTCMutes) (time.Time, error)
 	Kick(ctx context.Context, namespace, room, user string) error
 	KickDevice(ctx context.Context, namespace, room, user, device string) error
 	Mute(ctx context.Context, namespace, room, user string, muted bool) error
 	MuteVideo(ctx context.Context, namespace, room, user string, muted bool) error
 	AdmissionOf(ctx context.Context, namespace, room, user, device string) (WebRTCAdmission, error)
+}
+
+// WebRTCMutes is the forced mute state of a user in a room, of their audio and
+// of their video, as an admission states it (feat-972).
+type WebRTCMutes struct {
+	Muted, VideoMuted bool
 }
 
 // WebRTCAdmission is what a namespace has on record for one device of a user

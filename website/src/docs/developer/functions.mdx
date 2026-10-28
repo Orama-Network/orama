@@ -1282,6 +1282,7 @@ function's own namespace** and on no other; the room, the user and the device ar
 | Function | Description |
 |----------|-------------|
 | `webrtc_admit(room, user, device, ttl_seconds)` → string | Admits `user` (the identity they will join as, which the other `webrtc_*` functions take too: their `account_id` claim when the namespace's claims provider names one, otherwise their token's subject; see [Identity](/docs/developer/webrtc#identity)) to `room` for `ttl_seconds` (1 to 86400), from any device when `device` is empty or from that device only: `device` is a session's device id, as `get_caller_device_id` returns it ([Admitting one device](/docs/developer/webrtc#admitting-one-device)). A namespace that [requires admission](/docs/developer/webrtc#admission) lets in only users admitted this way. Admitting again extends the admission and lifts a revocation. Returns JSON `{"room","user_id","device_id","expires_at"}` (unix seconds), or empty on failure (the gateway log says why): an invalid room, a user or device over 256 bytes, a ttl out of range, or a gateway with no WebRTC set up. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32, ttl_seconds i64) → i64`, the packed `ptr<<32 \| len`. |
+| `webrtc_admit_with_mutes(room, user, device, ttl_seconds, muted, video_muted)` → string | `webrtc_admit` that also states the user's audio (`muted`) and video (`video_muted`) mutes in `room`, non-zero for muted, written in the same transaction as the admission: every join it lets in is muted from its first packet, with no `webrtc_mute` call after it. The mutes are the user's, as `webrtc_mute` sets them, on every admission and connection of theirs in the room. The SFUs are called only when one may hold another state (see [Admitting with mutes](/docs/developer/webrtc#admitting-with-mutes)); when one cannot be told, nothing is recorded. `webrtc_admit` keeps the mutes on record, so admitting again with it does not change them. Returns JSON `{"room","user_id","device_id","expires_at","muted","video_muted"}`, or empty on failure. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32, ttl_seconds i64, muted, video_muted i32) → i64`, the packed `ptr<<32 \| len`. |
 | `webrtc_kick(room, user)` → i32 | Revokes every admission of `user` to `room` and closes their connection on every SFU of the namespace; the rejoin is refused until they are admitted again. `1` when both were done, `0` otherwise: when any SFU could not be told, the revocation still stands (the log says so) and repeating the call is safe. Signature: `(room_ptr, room_len, user_ptr, user_len i32) → i32`. |
 | `webrtc_kick_device(room, user, device)` → i32 | Revokes the admission of one device of `user` to `room` (`device` is the session's device id; empty is refused, a session bound to no device is kicked with `webrtc_kick`) and closes that device's connection on every SFU of the namespace; the user's other devices stay. The device is refused until it, or the user from every device, is admitted again, even when the user was admitted from every device before the kick. `1` when both were done, `0` otherwise, as `webrtc_kick`. Signature: `(room_ptr, room_len, user_ptr, user_len, device_ptr, device_len i32) → i32`. |
 | `webrtc_mute(room, user, muted)` → i32 | Stops (`muted` non-zero) or resumes the forwarding of `user`'s audio in `room`, on every SFU of the namespace, so a modified client that keeps sending is still silent. Recorded on their admissions, so it holds when they rejoin (for 7 days after the admission expires), and logged by each SFU so a ticket issued before it cannot undo it. `1` on success, `0` on failure. Signature: `(room_ptr, room_len, user_ptr, user_len, muted i32) → i32`. |
@@ -1294,10 +1295,17 @@ func webrtcAdmit(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlS
 
 // admit the caller to the call they were invited to, for ten minutes
 admitted := unpack(webrtcAdmit(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), 0, 0, 600))
+
+//go:wasmimport env webrtc_admit_with_mutes
+func webrtcAdmitWithMutes(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64, muted, videoMuted uint32) uint64
+
+// seat a listener's device for an hour, neither heard nor seen until invited on stage
+seated := unpack(webrtcAdmitWithMutes(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)),
+	ptr(device), uint32(len(device)), 3600, 1, 1))
 ```
 
 A single invocation (or persistent-socket frame) may make at most 100 `webrtc_*` calls
-(`webrtc_admit`, `webrtc_kick`, `webrtc_kick_device`, `webrtc_mute`, `webrtc_mute_video` and
+(`webrtc_admit`, `webrtc_admit_with_mutes`, `webrtc_kick`, `webrtc_kick_device`, `webrtc_mute`, `webrtc_mute_video` and
 `webrtc_admission`) together, because each reads or writes the namespace's database
 and a kick or mute calls every SFU; the 101st fails (`0`, and the gateway log says the
 budget is exceeded), as `pubsub_publish` does past 1000.

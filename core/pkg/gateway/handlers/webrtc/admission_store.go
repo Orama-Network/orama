@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Orama-Network/orama/core/pkg/rqlite"
+	"github.com/Orama-Network/orama/core/pkg/serverless"
 	"github.com/Orama-Network/orama/core/pkg/sfu/ctrlauth"
 )
 
@@ -209,9 +210,7 @@ func (s *AdmissionStore) Admit(ctx context.Context, namespace, room, user, devic
 	}
 	now := s.now()
 	expires := now.Add(ttl)
-	if _, err := s.db.Exec(ctx, `DELETE FROM webrtc_admissions WHERE namespace = ?
-		AND MAX(expires_at, COALESCE(revoked_at, 0)) <= ? AND ((muted = 0 AND video_muted = 0) OR expires_at <= ?)`,
-		namespace, now.Add(-generationRetention).Unix(), now.Add(-mutedRetention).Unix()); err != nil {
+	if _, err := s.db.Exec(ctx, purgeEnded, purgeArgs(namespace, now)...); err != nil {
 		return time.Time{}, fmt.Errorf("failed to remove expired WebRTC admissions of namespace %q: %w", namespace, err)
 	}
 	_, err := s.db.Exec(ctx, `INSERT INTO webrtc_admissions (namespace, room, user_id, device_id, expires_at, revoked_at, muted, created_at, generation)
@@ -223,6 +222,105 @@ func (s *AdmissionStore) Admit(ctx context.Context, namespace, room, user, devic
 		return time.Time{}, fmt.Errorf("failed to record the WebRTC admission of %q to room %q: %w", user, room, err)
 	}
 	return time.Unix(expires.Unix(), 0), nil
+}
+
+// purgeEnded removes the admissions Admit no longer keeps (see Admit); its
+// arguments are purgeArgs.
+const purgeEnded = `DELETE FROM webrtc_admissions WHERE namespace = ?
+	AND MAX(expires_at, COALESCE(revoked_at, 0)) <= ? AND ((muted = 0 AND video_muted = 0) OR expires_at <= ?)`
+
+func purgeArgs(namespace string, now time.Time) []any {
+	return []any{namespace, now.Add(-generationRetention).Unix(), now.Add(-mutedRetention).Unix()}
+}
+
+// AdmitWithMutes is Admit stating the user's mutes in room (feat-972): the
+// admission is written muted as mutes says, and every other admission of the
+// user in the room takes the same mutes, in one transaction, so the first join
+// the admission lets in is judged with them and its ticket carries them. The
+// mutes are the user's, as webrtc_mute sets them, not the device's: judge
+// reads a device's admission together with the user's admission for every
+// device.
+func (s *AdmissionStore) AdmitWithMutes(ctx context.Context, namespace, room, user, device string, ttl time.Duration,
+	mutes serverless.WebRTCMutes) (time.Time, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return time.Time{}, err
+	}
+	now := s.now()
+	expires := now.Add(ttl)
+	audio, video := flagOf(mutes.Muted), flagOf(mutes.VideoMuted)
+	res, err := s.db.Batch(ctx, []rqlite.BatchOp{{
+		Kind: rqlite.BatchOpExec, SQL: purgeEnded, Args: purgeArgs(namespace, now),
+	}, {
+		Kind: rqlite.BatchOpExec,
+		SQL: `INSERT INTO webrtc_admissions (namespace, room, user_id, device_id, expires_at, revoked_at, muted, video_muted, created_at, generation)
+		VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ` + nextGeneration + `)
+		ON CONFLICT(namespace, room, user_id, device_id) DO UPDATE SET expires_at = excluded.expires_at, revoked_at = NULL,
+		muted = excluded.muted, video_muted = excluded.video_muted, generation = excluded.generation`,
+		Args: []any{namespace, room, user, device, expires.Unix(), audio, video, now.Unix(), namespace, room, user},
+	}, {
+		Kind: rqlite.BatchOpExec,
+		SQL:  `UPDATE webrtc_admissions SET muted = ?, video_muted = ? WHERE namespace = ? AND room = ? AND user_id = ?`,
+		Args: []any{audio, video, namespace, room, user},
+	}})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to record the WebRTC admission of %q to room %q with its mutes: %w", user, room, err)
+	}
+	if !res.Committed {
+		return time.Time{}, fmt.Errorf("the WebRTC admission of %q to room %q with its mutes was rolled back at statement %d: %s",
+			user, room, res.FailedIndex, res.Error)
+	}
+	return time.Unix(expires.Unix(), 0), nil
+}
+
+// StaleMutes returns the media whose mute, as mutes states it, an SFU may not
+// hold for user in room yet: a ticket issued on the user's admissions, or the
+// connection one let in, carries the mutes on record when it was issued, so a
+// medium the records hold in another state on any admission of the user is
+// stale. A user with no admission in a namespace that requires one has neither
+// ticket nor connection, and nothing is stale: the first join's ticket carries
+// the mutes. In a namespace that admits without an admission, such a user may
+// be connected in whatever state a webrtc_mute left, so both media are.
+func (s *AdmissionStore) StaleMutes(ctx context.Context, namespace, room, user string, mutes serverless.WebRTCMutes) ([]Media, error) {
+	if err := s.ensureSchema(ctx); err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		N        int64 `db:"n"`
+		MinAudio int   `db:"min_audio"`
+		MaxAudio int   `db:"max_audio"`
+		MinVideo int   `db:"min_video"`
+		MaxVideo int   `db:"max_video"`
+	}
+	err := s.db.Query(ctx, &rows, `SELECT COUNT(*) AS n, COALESCE(MIN(muted), 0) AS min_audio, COALESCE(MAX(muted), 0) AS max_audio,
+		COALESCE(MIN(video_muted), 0) AS min_video, COALESCE(MAX(video_muted), 0) AS max_video
+		FROM webrtc_admissions WHERE namespace = ? AND room = ? AND user_id = ?`, namespace, room, user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read the WebRTC mutes of %q in room %q: %w", user, room, err)
+	}
+	if len(rows) == 0 || rows[0].N == 0 {
+		require, err := s.RequireAdmission(ctx, namespace)
+		if err != nil || require {
+			return nil, err
+		}
+		return []Media{MediaAudio, MediaVideo}, nil
+	}
+	r := rows[0]
+	var stale []Media
+	if a := flagOf(mutes.Muted); r.MinAudio != a || r.MaxAudio != a {
+		stale = append(stale, MediaAudio)
+	}
+	if v := flagOf(mutes.VideoMuted); r.MinVideo != v || r.MaxVideo != v {
+		stale = append(stale, MediaVideo)
+	}
+	return stale, nil
+}
+
+// flagOf is how a mute is stored: 1 when muted, 0 when not.
+func flagOf(muted bool) int {
+	if muted {
+		return 1
+	}
+	return 0
 }
 
 // Revoke ends every admission of user to room, whatever the device, and returns
@@ -297,12 +395,8 @@ func (s *AdmissionStore) SetMuted(ctx context.Context, namespace, room, user str
 	if err := s.ensureSchema(ctx); err != nil {
 		return err
 	}
-	flag := 0
-	if muted {
-		flag = 1
-	}
 	_, err := s.db.Exec(ctx, `UPDATE webrtc_admissions SET `+m.column()+` = ? WHERE namespace = ? AND room = ? AND user_id = ?`,
-		flag, namespace, room, user)
+		flagOf(muted), namespace, room, user)
 	if err != nil {
 		return fmt.Errorf("failed to record the %s mute of %q in room %q: %w", m, user, room, err)
 	}

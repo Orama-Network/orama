@@ -18,7 +18,7 @@ import (
 // mutes reach the SFUs that hold the rooms (pkg/gateway/handlers/webrtc/control.go).
 
 // maxWebRTCCallsPerInvocation caps how many webrtc_* control calls (admit,
-// kick, kick_device, mute, mute_video, admission) one function invocation (or
+// admit_with_mutes, kick, kick_device, mute, mute_video, admission) one function invocation (or
 // persistent WS frame) may make.
 // Like maxPublishesPerInvocation it is a safety bound and not a normal-path
 // limit: each call writes the namespace's database and, for a kick or a mute,
@@ -69,14 +69,42 @@ func (h *HostFunctions) WebRTCAdmit(ctx context.Context, room, user, device stri
 	if err != nil {
 		return "", &serverless.HostFunctionError{Function: "webrtc_admit", Cause: err}
 	}
-	out, err := json.Marshal(struct {
+	return encodeAdmitted("webrtc_admit", struct {
 		Room      string `json:"room"`
 		UserID    string `json:"user_id"`
 		DeviceID  string `json:"device_id"`
 		ExpiresAt int64  `json:"expires_at"`
 	}{room, user, device, expires.Unix()})
+}
+
+// WebRTCAdmitWithMutes is WebRTCAdmit stating the user's audio and video
+// mutes in room, recorded with the admission (feat-972). It returns the
+// admission as JSON {"room","user_id","device_id","expires_at","muted",
+// "video_muted"}.
+func (h *HostFunctions) WebRTCAdmitWithMutes(ctx context.Context, room, user, device string, ttl time.Duration,
+	mutes serverless.WebRTCMutes) (string, error) {
+	ns, c, err := h.webrtcNamespace(ctx, "webrtc_admit_with_mutes")
 	if err != nil {
-		return "", &serverless.HostFunctionError{Function: "webrtc_admit", Cause: fmt.Errorf("failed to encode the admission: %w", err)}
+		return "", err
+	}
+	expires, err := c.AdmitWithMutes(ctx, ns, room, user, device, ttl, mutes)
+	if err != nil {
+		return "", &serverless.HostFunctionError{Function: "webrtc_admit_with_mutes", Cause: err}
+	}
+	return encodeAdmitted("webrtc_admit_with_mutes", struct {
+		Room       string `json:"room"`
+		UserID     string `json:"user_id"`
+		DeviceID   string `json:"device_id"`
+		ExpiresAt  int64  `json:"expires_at"`
+		Muted      bool   `json:"muted"`
+		VideoMuted bool   `json:"video_muted"`
+	}{room, user, device, expires.Unix(), mutes.Muted, mutes.VideoMuted})
+}
+
+func encodeAdmitted(fn string, admission any) (string, error) {
+	out, err := json.Marshal(admission)
+	if err != nil {
+		return "", &serverless.HostFunctionError{Function: fn, Cause: fmt.Errorf("failed to encode the admission: %w", err)}
 	}
 	return string(out), nil
 }

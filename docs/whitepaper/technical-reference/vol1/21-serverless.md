@@ -2,7 +2,7 @@
 
 > **At a glance.**
 >
-> - **What:** tenant code compiled to WebAssembly and run by the namespace's own gateway inside a wazero runtime. A function is a TinyGo program in one of three shapes: a command that reads JSON on stdin and writes JSON on stdout, a reactor with a `handle` export whose cold start is paid ahead of the request, or a persistent instance bound to one WebSocket. It reaches the platform only through 55 host functions, all registered under the three module names `env`, `host` and `orama`. Functions run on request (HTTP, WebSocket), on a cron row, on a pub/sub message, or when another function calls them.
+> - **What:** tenant code compiled to WebAssembly and run by the namespace's own gateway inside a wazero runtime. A function is a TinyGo program in one of three shapes: a command that reads JSON on stdin and writes JSON on stdout, a reactor with a `handle` export whose cold start is paid ahead of the request, or a persistent instance bound to one WebSocket. It reaches the platform only through 56 host functions, all registered under the three module names `env`, `host` and `orama`. Functions run on request (HTTP, WebSocket), on a cron row, on a pub/sub message, or when another function calls them.
 > - **Key numbers:** memory 1 to 256 MB (default 64 MB), timeout 1 to 60 s (default 30 s), retries 0 to 5, invoke body 1 MiB, 10 retained versions per function, module cache 100 (compiled code also kept on disk by a namespace gateway), 10 concurrent instantiations per gateway and 5 per namespace on a shared gateway, all 10 on a namespace gateway, 5,000 persistent sockets, 64 queued frames per socket, 100 statements per database batch, 1,000 publishes per invocation, trigger depth 5, dispatch dedup 30 s, cron poll 30 s, invocation-log queue 4,096.
 > - **Code:** `core/pkg/serverless/` (engine, executor, registry, invoker, rate limiter, triggers, aggregator, persistent instances, WebSocket manager, bridge, host functions), `core/pkg/gateway/handlers/serverless/` (HTTP and WebSocket handlers), `core/sdk/fn/` (the function SDK).
 > - **Depends on:** [gateway architecture](12-gateway-architecture.md) for routing and readiness, [identity](13-identity.md) and [authorization](14-authorization.md) for who may call, [the database](17-database.md), [the cache](18-cache.md), [storage](19-storage.md) and [pub/sub](20-pubsub.md) for what the host functions reach.
@@ -308,6 +308,7 @@ Every host function is a Go method on `Engine` registered by `registerHostModule
 | env, host, orama | `push_send_topic` | `(s topic_id, s msg) -> P64` | push topics of the namespace | `topic_id` is the lowercase hex SHA-256 of the device's topic secret; an unknown topic is `ok` false with reason `TopicNotFound` |
 | env, host, orama | `turn_credentials` | `() -> P64` | the gateway's TURN secret | `configured`, `username`, `password`, `ttl` (24 h), `uris`, `namespace`; `configured` false without a secret |
 | env, host, orama | `webrtc_admit` | `(s room, s user, s device, i64 ttl_seconds) -> P64` | the namespace's WebRTC controller | Controller bound 1 s to 24 h; `room`, `user`, `device` bounded; 100 `webrtc_*` calls per invocation |
+| env, host, orama | `webrtc_admit_with_mutes` | `(s room, s user, s device, i64 ttl_seconds, i32 muted, i32 video_muted) -> P64` | the namespace's WebRTC controller | `webrtc_admit`'s bounds; the user's audio and video mutes written in the admission's transaction; an SFU that may hold another state is told first, and nothing is recorded if it cannot be |
 | env, host, orama | `webrtc_kick` | `(s room, s user) -> i32` | the namespace's WebRTC controller | Revokes admissions then closes on every SFU; 1 only if both worked; repeat is safe |
 | env, host, orama | `webrtc_kick_device` | `(s room, s user, s device) -> i32` | the namespace's WebRTC controller | Revokes one device's admission then closes that device on every SFU; empty device refused |
 | env, host, orama | `webrtc_mute` | `(s room, s user, i32 muted) -> i32` | the namespace's WebRTC controller | Non-zero mutes the audio; recorded so a rejoin stays muted |
@@ -332,7 +333,7 @@ Every host function is a Go method on `Engine` registered by `registerHostModule
 | env, host, orama | `log_info` | `(s message) -> ()` | the invocation | Truncated at 16 KiB; 1,000 entries per invocation |
 | env, host, orama | `log_error` | `(s message) -> ()` | the invocation | As `log_info` |
 
-That is 55 exports. `StoragePut` and `StorageGet` exist on `HostFunctions` but are not exported, so a function cannot read or write IPFS directly; `EnqueueBackground` and `ScheduleOnce` are stubs and not exported either.
+That is 56 exports. `StoragePut` and `StorageGet` exist on `HostFunctions` but are not exported, so a function cannot read or write IPFS directly; `EnqueueBackground` and `ScheduleOnce` are stubs and not exported either.
 
 ### Outbound HTTP and the egress guard
 

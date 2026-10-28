@@ -373,6 +373,10 @@ func (m *MockHostServices) WebRTCAdmit(ctx context.Context, room, user, device s
 	return "", nil
 }
 
+func (m *MockHostServices) WebRTCAdmitWithMutes(ctx context.Context, room, user, device string, ttl time.Duration, mutes WebRTCMutes) (string, error) {
+	return "", nil
+}
+
 func (m *MockHostServices) WebRTCKick(ctx context.Context, room, user string) error {
 	return nil
 }

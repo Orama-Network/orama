@@ -459,6 +459,10 @@ func TestAdmission_lifecycle(t *testing.T) {
 	t.Run("a device admitted by its session's device id joins, another device of the account does not, and a device kick removes that device alone", func(t *testing.T) {
 		deviceAdmission(t, fx, caller, admin.token)
 	})
+
+	t.Run("a device admitted with its mutes has nothing forwarded from its first packet, with no mute call after the admission", func(t *testing.T) {
+		admittedMuted(t, fx, caller, bob)
+	})
 }
 
 // expectSilence publishes from pub for silenceWindow and fails if sub receives
