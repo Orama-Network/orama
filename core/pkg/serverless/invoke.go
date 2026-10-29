@@ -99,6 +99,11 @@ type InvokeRequest struct {
 	// `did` of a token the gateway verified — or "" for a session bound to the
 	// account alone, an API key, or no credential.
 	CallerDeviceID string `json:"caller_device_id,omitempty"`
+	// CallerDeviceState is the state of that device the verified token names:
+	// CallerDevicePending for a pending device's restricted session, which the
+	// invoker runs only functions open to pending devices for,
+	// CallerDeviceActive, or "".
+	CallerDeviceState string `json:"caller_device_state,omitempty"`
 	// CallerAttestation is what the caller's device attestation proved, from
 	// the verified token's `att` claim, or nil.
 	CallerAttestation *CallerAttestation `json:"caller_attestation,omitempty"`
@@ -125,6 +130,13 @@ type InvokeRequest struct {
 	// and can be copied onto it; it is set here, by the gateway-internal
 	// dispatcher that has the authority, and by nothing that reads a request.
 	SystemOriginated bool `json:"-"`
+
+	// ParentFunction is the function whose function_invoke or
+	// function_invoke_async made this call, "" for a call from anything else.
+	// A function that declares invocable_by runs only for a parent it names
+	// (feat-971). Like SystemOriginated it is set by the host functions, from
+	// the parent's own invocation context, and by nothing that reads a request.
+	ParentFunction string `json:"-"`
 }
 
 // InvokeResponse contains the result of a function invocation.
@@ -185,6 +197,18 @@ func (i *Invoker) Invoke(ctx context.Context, req *InvokeRequest) (*InvokeRespon
 	// from a system-triggered parent was given a trigger type that counted as
 	// system — so the authority to skip the check travelled with the work as
 	// an ordinary field.
+	//
+	// A function that declares invocable_by is first refused to everything
+	// but the parents it names (feat-971); a named parent's call is then
+	// still the caller's, checked below like any other.
+	if err := authorizeParent(fn, req); err != nil {
+		return &InvokeResponse{
+			RequestID:  requestID,
+			Status:     InvocationStatusError,
+			Error:      err.Error(),
+			DurationMS: time.Since(startTime).Milliseconds(),
+		}, err
+	}
 	if !req.SystemOriginated && !capabilityOpens(fn, req) &&
 		!canInvokeFn(fn, req.CallerWallet, req.CallerIsAdmin, req.CallerHasInvoke) {
 		// Authorization uses the function we already fetched above —
@@ -196,6 +220,18 @@ func (i *Invoker) Invoke(ctx context.Context, req *InvokeRequest) (*InvokeRespon
 			Error:      "unauthorized",
 			DurationMS: time.Since(startTime).Milliseconds(),
 		}, ErrUnauthorized
+	}
+
+	// A pending device's session runs only what the namespace opened to it —
+	// whichever path asked: HTTP, a socket frame, or a function_invoke from a
+	// function that is open to it calling one that is not.
+	if err := PendingDeviceMayInvoke(fn, req.CallerDeviceState); err != nil {
+		return &InvokeResponse{
+			RequestID:  requestID,
+			Status:     InvocationStatusError,
+			Error:      err.Error(),
+			DurationMS: time.Since(startTime).Milliseconds(),
+		}, err
 	}
 
 	// Get environment variables
@@ -260,6 +296,9 @@ func newInvocationContext(req *InvokeRequest, fn *Function, requestID string, en
 		CallerClaims:     req.CallerClaims,
 		CallerJWTSubject: req.CallerJWTSubject,
 		CallerDeviceID:   req.CallerDeviceID,
+		// A nested call is the same caller: a pending device stays pending
+		// through every function_invoke it reaches.
+		CallerDeviceState: req.CallerDeviceState,
 		// A nested call is the same caller: its attestation goes with it.
 		CallerAttestation: req.CallerAttestation,
 		CallerCapability:  req.CallerCapability,

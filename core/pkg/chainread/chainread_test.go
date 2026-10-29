@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -244,9 +245,10 @@ func TestQueriesDescriptor_isCurrent(t *testing.T) {
 	if _, err := exec.LookPath("protoc"); err != nil {
 		t.Skip("protoc is not installed")
 	}
-	if _, err := os.Stat("../../../chain/proto/orama"); err != nil {
+	if _, err := os.Stat("../../testdata/repo/chain/proto/orama"); err != nil {
 		t.Skip("chain/proto is not next to core/")
 	}
+	declareGenInputs(t)
 	out := filepath.Join(t.TempDir(), "queries.binpb")
 	cmd := exec.Command("bash", "gen.sh")
 	cmd.Env = append(os.Environ(), "OUT="+out)
@@ -259,6 +261,23 @@ func TestQueriesDescriptor_isCurrent(t *testing.T) {
 	}
 	if string(fresh) != string(queriesDescriptor) {
 		t.Fatal("queries.binpb is stale: run core/pkg/chainread/gen.sh")
+	}
+}
+
+// declareGenInputs reads what gen.sh reads in processes of its own, which the
+// go test cache does not see: the script, chain/go.mod (it pins the cosmos
+// protos) and every directory under chain/proto (an opened directory is
+// recorded with each entry's size and modification time). Editing any of them
+// reruns the freshness test.
+func declareGenInputs(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"gen.sh", "../../testdata/repo/chain/go.mod"} {
+		if _, err := os.ReadFile(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := fs.WalkDir(os.DirFS("../../testdata/repo/chain/proto"), ".", func(string, fs.DirEntry, error) error { return nil }); err != nil {
+		t.Fatal(err)
 	}
 }
 

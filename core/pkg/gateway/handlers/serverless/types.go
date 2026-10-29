@@ -1,6 +1,7 @@
 package serverless
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -21,6 +22,9 @@ import (
 // the full auth service.
 type JWTVerifier interface {
 	ParseAndVerifyJWT(token string) (*auth.JWTClaims, error)
+	// DeviceRevocationRecord is the revocation of a device whose token
+	// ParseAndVerifyJWT refused for it, which an auth.refresh ack carries.
+	DeviceRevocationRecord(ctx context.Context, namespace, id string) (*auth.DeviceRevocationRecord, error)
 }
 
 // ServerlessHandlers contains handlers for serverless function endpoints.
@@ -184,6 +188,19 @@ func (h *ServerlessHandlers) getDeviceIDFromRequest(r *http.Request) string {
 	return strings.TrimSpace(claims.Did)
 }
 
+// getDeviceStateFromRequest returns the state of the device the caller's
+// session is bound to, as its token says: "pending" for a pending device's
+// restricted session (feat-973), "active", or "" for none. It is the source of
+// truth for `get_caller_device_state` inside WASM, and what the invoker
+// refuses a pending session every function not open to it by.
+func (h *ServerlessHandlers) getDeviceStateFromRequest(r *http.Request) string {
+	claims, _ := r.Context().Value(ctxkeys.JWT).(*auth.JWTClaims)
+	if claims == nil {
+		return ""
+	}
+	return claims.DeviceState()
+}
+
 // getAttestationFromRequest returns what the caller's device attestation
 // proved — the verified token's `att` claim — or nil. It is the source of
 // truth for `get_caller_attestation` inside WASM.
@@ -250,8 +267,15 @@ func (h *ServerlessHandlers) getCallerHasInvokeFromRequest(r *http.Request) bool
 
 // getCallerIsAdminFromRequest reports whether the request holds the admin
 // grant used to invoke `internal: true` functions (bugboard #152).
+//
+// A pending device's restricted session (feat-973) is never an admin, whatever
+// its account's grant: admin passes over `internal` and `invocable_by`, and a
+// pending session runs only what the namespace opened to pending devices.
 func (h *ServerlessHandlers) getCallerIsAdminFromRequest(r *http.Request) bool {
 	ctx := r.Context()
+	if claims, _ := ctx.Value(ctxkeys.JWT).(*auth.JWTClaims); claims.PendingDevice() {
+		return false
+	}
 	if v := ctx.Value(ctxkeys.Scopes); v != nil {
 		if s, ok := v.(auth.ScopeSet); ok && s.IsAdmin() {
 			return true

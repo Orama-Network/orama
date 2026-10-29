@@ -135,7 +135,7 @@ func TestValidateDeal_refusesWrongShape(t *testing.T) {
 }
 
 func TestDealRulesMatchTheChainModule(t *testing.T) {
-	keys, err := os.ReadFile("../../../chain/x/storage/types/keys.go")
+	keys, err := os.ReadFile("../../testdata/repo/chain/x/storage/types/keys.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,21 +151,21 @@ func TestDealRulesMatchTheChainModule(t *testing.T) {
 			t.Errorf("keys.go no longer contains %q", want)
 		}
 	}
-	msgs, err := os.ReadFile("../../../chain/x/storage/types/msgs.go")
+	msgs, err := os.ReadFile("../../testdata/repo/chain/x/storage/types/msgs.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(msgs, []byte("user deals must be PRIVATE or PUBLIC_PIN")) {
 		t.Fatal("create-deal class rule changed")
 	}
-	piece, err := os.ReadFile("../../../chain/piece/piece.go")
+	piece, err := os.ReadFile("../../testdata/repo/chain/piece/piece.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(piece, []byte("LeafSize = 1024")) {
 		t.Fatal("piece leaf size changed")
 	}
-	tx, err := os.ReadFile("../../../chain/x/storage/types/tx.pb.go")
+	tx, err := os.ReadFile("../../testdata/repo/chain/x/storage/types/tx.pb.go")
 	if err != nil {
 		t.Fatal(err)
 	}

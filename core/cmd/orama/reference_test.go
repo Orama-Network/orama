@@ -30,14 +30,17 @@ import (
 //	make -C core docs
 var updateReference = flag.Bool("update-cli-reference", false, "rewrite the whitepaper CLI reference (appendix D) from the command tree")
 
+// repoRoot is the repository as core/testdata/repo links it in. The docs these
+// tests read live above the module; reading them through a path inside it is
+// what makes the go test cache treat them as inputs.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	// .../core/cmd/orama -> repo root
-	return filepath.Clean(filepath.Join(wd, "..", "..", ".."))
+	// .../core/cmd/orama -> core/testdata/repo
+	return filepath.Clean(filepath.Join(wd, "..", "..", "testdata", "repo"))
 }
 
 // firstDifference reports the first differing line, which is all anyone needs

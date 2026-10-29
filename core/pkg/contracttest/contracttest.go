@@ -14,15 +14,16 @@
 // drives the SDK method and asserts the body it sends equals the same JSON, and
 // feeds `response` back to assert what the method returns.
 //
-// Run the Go half with -count=1. The fixtures live above the Go module, so the
-// test cache does not treat them as an input: editing a fixture alone leaves a
-// cached PASS in place. `make -C core test-contracts` and the CI step both pass
-// the flag.
+// The fixtures live above the Go module. They are read through the module's
+// testdata/repo/contracts link, a path inside the module, so the go test cache
+// treats every fixture a test read as an input of that test: editing a fixture
+// alone reruns the tests that read it.
 package contracttest
 
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -60,25 +61,26 @@ type Call struct {
 	Args   []json.RawMessage `json:"args"`
 }
 
-// Dir returns the repository's contracts directory.
-//
-// It walks up looking for a directory that holds both contracts/ and docs/,
-// which is true only of the repository root. Looking for a directory named
-// "contracts" alone is not enough: a directory named contracts under
-// core/ would be found first from any test under core/pkg.
+// linkedContracts is where a module links in the repository's contracts/
+// directory, relative to the module root.
+var linkedContracts = filepath.Join("testdata", "repo", "contracts")
+
+// Dir returns the repository's contracts directory as the core module links
+// it in: it walks up from startingAt to the module root holding
+// testdata/repo/contracts.
 func Dir(startingAt string) (string, error) {
 	dir, err := filepath.Abs(startingAt)
 	if err != nil {
 		return "", err
 	}
 	for {
-		candidate := filepath.Join(dir, "contracts")
-		if isDir(candidate) && isDir(filepath.Join(dir, "docs")) {
+		candidate := filepath.Join(dir, linkedContracts)
+		if isDir(candidate) {
 			return candidate, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("no repository contracts/ directory above %s", startingAt)
+			return "", fmt.Errorf("no module with %s above %s", linkedContracts, startingAt)
 		}
 		dir = parent
 	}
@@ -96,27 +98,25 @@ func Load(startingAt string) ([]Fixture, error) {
 		return nil, err
 	}
 
+	// dir is a link; os.DirFS follows it where filepath.Walk would stop at it.
+	contracts := os.DirFS(dir)
 	var fixtures []Fixture
-	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err = fs.WalkDir(contracts, ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".json") {
+		if d.IsDir() || !strings.HasSuffix(name, ".json") {
 			return nil
 		}
-		body, err := os.ReadFile(path)
+		body, err := fs.ReadFile(contracts, name)
 		if err != nil {
 			return err
 		}
 		var fixture Fixture
 		if err := json.Unmarshal(body, &fixture); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return fmt.Errorf("%s: %w", filepath.Join(dir, name), err)
 		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		fixture.Name = strings.TrimSuffix(filepath.ToSlash(rel), ".json")
+		fixture.Name = strings.TrimSuffix(name, ".json")
 		fixtures = append(fixtures, fixture)
 		return nil
 	})

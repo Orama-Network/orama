@@ -23,7 +23,7 @@ The check happens twice, and they are different questions. The **gate**, before 
 | Role | Holds |
 |---|---|
 | `owner` | Everything in the namespace. Only one wallet at a time |
-| `admin` | Everything the owner does, except being the owner |
+| `admin` | Everything the owner does, members and keys included, except what only the owner may do: transfer the namespace, back it up or restore it, and export or import its whole database |
 | `developer` | The data plane, plus `db`, `deploy`, `secrets`, `fn:manage` and `push:send`. **Not** `members` or `namespace` |
 | `runtime` | The data plane: storage, pub/sub, cache, push registration (`push:write`), WebRTC, proxy, and invoking functions. **Not** `push:send` |
 | `reader` | Nothing beyond the routes that ask for no permission |
@@ -47,9 +47,11 @@ orama members remove 0xabc…
 orama members transfer 0xabc…          # the owner, and only the owner
 ```
 
+**Who may run these.** `members list`, `add` and `remove` need `members:write`: the owner or an `admin`, signed in to the namespace with `orama auth login --namespace <ns>`, or an `admin`-scope key in `ORAMA_TOKEN`. Any other member is refused `403 INSUFFICIENT_SCOPE`, so the member list is not something a `developer` or `runtime` member can read; `orama auth whoami` is how any credential sees its own principal and role. `members transfer` needs the owner's own wallet session: no key holds the owner's role, and an admin is refused `403 OWNERSHIP_REQUIRED`.
+
 A member holds **one** grant. Adding a member who already holds one replaces it with the new role, selector and expiry, so `members add` is also how a role is changed or a selector removed. Roles you can grant: `reader`, `runtime`, `developer`, `admin`. A grant takes effect on every node as soon as the write returns.
 
-**Transferring ownership** is one step, not a removal and a grant, so there is no moment where the namespace has no owner. The outgoing owner keeps an `admin` grant, so handing a project over does not lock you out. The incoming owner's previous grant ends: ownership replaces it. The target must be a wallet address (`0x` and 40 hex digits, or a Solana public key). A transfer is held to the recipient's per-wallet namespace cap like a create is: a wallet already at the cap is refused `403 TRANSFER_REFUSED` (a generic answer that names neither the wallet nor the limit; the refusal itself tells the caller one thing about the recipient, that it cannot take another namespace), the owner keeps the namespace and nothing is written; a cap that cannot be read is a retryable 503.
+**Transferring ownership** is one step, not a removal and a grant, so there is no moment where the namespace has no owner. The outgoing owner keeps an `admin` grant, so handing a project over does not lock you out; the new owner takes it away with `orama members remove` if they want to. Keys minted before the transfer, the outgoing owner's sign-in key among them, keep working until they expire or are revoked, so a new owner who wants sole control lists them with `orama namespace keys list` and revokes the ones it does not recognise. The new owner signs in with `orama auth login --namespace <ns>`, and `orama namespace list`, which lists the namespaces a wallet owns, then shows it. The incoming owner's previous grant ends: ownership replaces it. The target must be a wallet address (`0x` and 40 hex digits, or a Solana public key). A transfer is held to the recipient's per-wallet namespace cap like a create is: a wallet already at the cap is refused `403 TRANSFER_REFUSED` (a generic answer that names neither the wallet nor the limit; the refusal itself tells the caller one thing about the recipient, that it cannot take another namespace), the owner keeps the namespace and nothing is written; a cap that cannot be read is a retryable 503.
 
 ### Narrowing a grant
 
@@ -96,6 +98,10 @@ orama namespace keys list
 orama namespace keys rotate --id 12 --overlap-days 7
 orama namespace keys revoke --id 12
 ```
+
+**Who may manage keys.** `orama namespace keys create`, `list`, `rotate`, `revoke` and `revoke-legacy` need `members:write`, like the member commands: the owner or an `admin`, signed in with `orama auth login --namespace <ns>` (RootWallet signs the sign-in challenge; [Sign in](/docs/developer/sign-in)), or an `admin`-scope key in `ORAMA_TOKEN`. A `developer`, `runtime` or `reader` member, and any key holding less than `admin`, is refused `403 INSUFFICIENT_SCOPE` with `required_permission: members:write:*`. A credential that holds no grant in the namespace at all is refused `403 OWNERSHIP_REQUIRED`. Keys are minted in the cluster's registry, in the namespace the credential belongs to.
+
+The CLI sends key management a token exchanged for the key, never the key itself. From Orama 0.3.5 until the release after 0.3.11, the gateway looked such a token's grant up under a hash of the key's stored hash, found none, and refused an `admin` key's token on every route that needs a grant with `403 OWNERSHIP_REQUIRED`, which the CLI printed as "only the namespace's owner may do this". A wallet session and a key sent bare were not affected.
 
 `--scope` takes a **profile** or a comma-separated grant list.
 
@@ -186,6 +192,7 @@ A WebSocket is authorised once, at the upgrade. Every socket opened with a token
 |---|---|
 | `4401` | The token expired more than two minutes ago and was not refreshed on the socket. Reconnect with a fresh token |
 | `4403` | The token, its session or its subject was revoked. Sign in again |
+| `4410` | The device the token is bound to was revoked; it can never sign in again. Any request with the token answers `403 DEVICE_REVOKED` with the revocation ([What a revoked device is told](/docs/developer/devices#what-a-revoked-device-is-told)) |
 | `4503` | The gateway could not check revocation for 2 minutes. Reconnect shortly |
 
 A persistent function socket takes `{"__orama":"auth.refresh","jwt":…}` and is held to the new token from then on. A refresh must be for the **same subject**, and a socket opened with an API key or no credential cannot take one. A socket opened with an API key has no token; it is held to the key instead, and revoking the key closes its open sockets with `4403` within ten seconds as well as refusing new ones.

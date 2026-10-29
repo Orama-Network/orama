@@ -35,6 +35,13 @@ var (
 	// ErrUnauthorized is returned when the caller is not authorized.
 	ErrUnauthorized = errors.New("unauthorized")
 
+	// ErrFunctionNotDirectlyInvocable is returned when a function that declares
+	// invocable_by is invoked by anything other than a function it names: a
+	// client on any route, or another function of the namespace. It wraps
+	// ErrUnauthorized, so every path that treats a refusal as permanent treats
+	// this one so too.
+	ErrFunctionNotDirectlyInvocable = fmt.Errorf("function not directly invocable: %w", ErrUnauthorized)
+
 	// ErrRateLimited is returned when the rate limit is exceeded.
 	ErrRateLimited = errors.New("rate limit exceeded")
 

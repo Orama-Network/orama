@@ -222,6 +222,22 @@ func (m *mockHostServices) GetCallerAttestationVerdict(ctx context.Context) stri
 	return ""
 }
 
+func (m *mockHostServices) GetCallerDeviceState(ctx context.Context) string {
+	return ""
+}
+
+func (m *mockHostServices) ApproveDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
+func (m *mockHostServices) DenyDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
+func (m *mockHostServices) DenyDeviceWithEvidence(ctx context.Context, subject, device, evidence string) error {
+	return nil
+}
+
 func (m *mockHostServices) GetCallerCapability(ctx context.Context) string {
 	return ""
 }
@@ -239,6 +255,10 @@ func (m *mockHostServices) MintStorageFetchCaps(ctx context.Context, cid string,
 }
 
 func (m *mockHostServices) WebRTCAdmit(ctx context.Context, room, user, device string, ttl time.Duration) (string, error) {
+	return "", nil
+}
+
+func (m *mockHostServices) WebRTCAdmitWithMutes(ctx context.Context, room, user, device string, ttl time.Duration, mutes WebRTCMutes) (string, error) {
 	return "", nil
 }
 

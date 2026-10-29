@@ -74,7 +74,7 @@ export function createClient(config: ClientConfig): Client {
 
 export { HttpClient } from "./core/http";
 export type { NetworkErrorCallback, NetworkErrorContext } from "./core/http";
-export { WSClient } from "./core/ws";
+export { WSClient, WSCloseCode } from "./core/ws";
 export { Logger } from "./core/logger";
 export type { LogSink } from "./core/logger";
 export { AuthClient } from "./auth/client";
@@ -93,9 +93,11 @@ export {
   NotFoundError,
   NetworkError,
   RevokedCredentialError,
+  RevokedDeviceError,
   NamespaceError,
   AuthCode,
   FunctionCode,
+  FunctionNotDirectlyInvocableError,
   RelayError,
   FetchCapError,
   LogoutError,
@@ -118,6 +120,15 @@ export type {
   AppAttestAssertionProvider,
 } from "./auth/attestation";
 export { deviceIdOf, deviceProofMessage, makeDeviceProof, normalizeUserCode } from "./auth/device";
+export { deviceRevocationOf, verifyDeviceRevocation, webCryptoVerify } from "./auth/revocation";
+export type {
+  RevokedBy,
+  DeviceRevocation,
+  DeviceRevocationProof,
+  DeviceRevocationVerdict,
+  RevocationSignatureVerifier,
+  VerifyDeviceRevocationOptions,
+} from "./auth/revocation";
 export type {
   DeviceSigner,
   DeviceProof,
@@ -126,6 +137,7 @@ export type {
   DeviceLink,
   PendingDeviceApproval,
 } from "./auth/device";
+export type { DeviceState } from "./auth/client";
 export type {
   WSClientConfig,
   ReconnectConfig,

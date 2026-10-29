@@ -478,6 +478,8 @@ webrtc_admit(room, user, device, ttl_seconds) -> {"room","user_id","device_id","
   keeps a mute on record: an expired admission that carries a mute is kept for 7 days after it expires, so
   admitting the user again within that time does not unmute them. After 7 it is purged, which bounds the table,
   and a user admitted again then starts unmuted; a function that needs a longer mute calls `webrtc_mute` again.
+  `webrtc_admit` never changes a mute; to admit a user muted, use `webrtc_admit_with_mutes`
+  ([Admitting with mutes](#admitting-with-mutes)).
 
 **The admission's end holds for a live session.** The join ticket carries the unix second the admission it
 was issued on ends, and the SFU removes the peer then: it is sent `kicked` with `data.code`
@@ -526,6 +528,37 @@ Where it lives: the policy (`webrtc_settings`) and the admissions (`webrtc_admis
 are the tenant's own policy and grants, so no cluster-wide write sits on the join path; no SFU holds any of
 it, so it survives an SFU restart and is the same whichever node owns the room. A namespace that never turns
 the policy on keeps today's behaviour; the identity rule above applies either way.
+
+### Admitting with mutes
+
+An application that seats a user who may not be heard or seen yet (a listener in an audio room, before they
+are invited on stage) admits them with their mutes stated, so they are muted from their first packet:
+
+```
+webrtc_admit_with_mutes(room, user, device, ttl_seconds, muted, video_muted)
+  -> {"room","user_id","device_id","expires_at","muted","video_muted"}
+```
+
+- `room`, `user`, `device` and `ttl_seconds` are `webrtc_admit`'s. `muted` (audio) and `video_muted` (camera
+  and screen) are `1` for muted and `0` for not, and both are always stated: a call that wants to keep a
+  mute on record uses `webrtc_admit`, which leaves both as they are.
+- The mutes are written in the **same transaction** as the admission. The ticket of every join it lets in
+  carries them, and the SFU sets the peer's mutes from the ticket before the peer is in the room, so none of
+  its audio or video is forwarded, from the first packet, with no `webrtc_mute` or `webrtc_mute_video` call
+  after the admission. `webrtc_admission` reports them.
+- The mutes are the **user's** in the room, as `webrtc_mute` and `webrtc_mute_video` set them: naming one
+  device's admission sets them on every admission of the user in the room, and on every connection of
+  theirs. They are lifted, or set again, with `webrtc_mute` and `webrtc_mute_video`, or by admitting again
+  with other mutes.
+- **When the SFUs are told.** A user's first admission to a room in a namespace that requires admission
+  calls no SFU: no join of theirs has been let in, so nothing on an SFU can be in another state. When the
+  user has an admission on record that holds another state (a connection of theirs, or a ticket issued on it,
+  carries that state), or the namespace does not require admission (the user may be connected without one),
+  the SFUs are told the changed mutes first, as a mute tells them, and the admission is recorded after: a
+  join whose ticket was issued in between is corrected from the SFU's mute log ([Kick and mute](#kick-and-mute)).
+  When an SFU cannot be told, nothing is recorded and the call fails (`0`); calling it again is safe. Admitting
+  again with the mutes already on record calls no SFU. A user left in a room when the namespace turned
+  admission on, and never admitted, is not told (see "What each setting changes"): kick them.
 
 ### Admitting one device
 

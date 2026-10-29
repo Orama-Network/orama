@@ -111,12 +111,18 @@ func (h *HostFunctions) FunctionInvoke(ctx context.Context, name string, payload
 		// A gateway-started invocation stays gateway-started down the chain.
 		// A caller-started one never becomes gateway-started.
 		SystemOriginated: cur.SystemOriginated,
+		// The child knows which function called it: one that declares
+		// invocable_by runs only for a parent it names (feat-971).
+		ParentFunction:   cur.FunctionName,
 		CallerIP:         cur.CallerIP,
 		CallerKey:        cur.CallerKey,
 		WSClientID:       cur.WSClientID,
 		CallerClaims:     cur.CallerClaims,
 		CallerJWTSubject: cur.CallerJWTSubject,
 		CallerDeviceID:   cur.CallerDeviceID,
+		// A pending device stays pending down the chain: a function open to
+		// it cannot hand it one that is not.
+		CallerDeviceState: cur.CallerDeviceState,
 		// The same caller down the chain, attested or not.
 		CallerAttestation: cur.CallerAttestation,
 		// Propagate trigger depth so a wildcard-triggered handler that
@@ -219,12 +225,14 @@ func (h *HostFunctions) FunctionInvokeAsync(ctx context.Context, name string, pa
 			CallerIsAdmin:     snapshot.CallerIsAdmin,
 			CallerHasInvoke:   snapshot.CallerHasInvoke,
 			SystemOriginated:  snapshot.SystemOriginated,
+			ParentFunction:    snapshot.FunctionName,
 			CallerIP:          snapshot.CallerIP,
 			CallerKey:         snapshot.CallerKey,
 			WSClientID:        snapshot.WSClientID,
 			CallerClaims:      snapshot.CallerClaims,
 			CallerJWTSubject:  snapshot.CallerJWTSubject,
 			CallerDeviceID:    snapshot.CallerDeviceID,
+			CallerDeviceState: snapshot.CallerDeviceState,
 			CallerAttestation: snapshot.CallerAttestation,
 			TriggerDepth:      snapshot.TriggerDepth,
 		}

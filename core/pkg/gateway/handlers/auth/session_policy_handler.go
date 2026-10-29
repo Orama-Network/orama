@@ -15,7 +15,7 @@ import (
 // GET /v1/namespace/session-policy   the namespace's device and sign-in policy,
 //                                    the topics its end users read and its
 //                                    per-IP limits
-// PUT /v1/namespace/session-policy   {"device_policy": "optional"|"required"|"approval",
+// PUT /v1/namespace/session-policy   {"device_policy": "optional"|"required"|"approval"|"function",
 //                                     "sign_in": "members"|"open",
 //                                     "end_user_topics": ["presence/*", ...],
 //                                     "per_ip_limits": "on"|"off",
@@ -112,12 +112,12 @@ func parseSessionPolicyRequest(w http.ResponseWriter, r *http.Request) (sessionP
 	r.Body = http.MaxBytesReader(w, r.Body, maxSessionPolicyBody)
 	var req SessionPolicyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body: expected {\"device_policy\": \"optional|required|approval\", \"sign_in\": \"members|open\", \"end_user_topics\": [\"pattern\", ...], \"per_ip_limits\": \"on|off\", \"new_wallets_per_ip_hour\": n, \"invokes_per_ip_minute\": n}")
+		writeError(w, http.StatusBadRequest, "invalid json body: expected {\"device_policy\": \"optional|required|approval|function\", \"sign_in\": \"members|open\", \"end_user_topics\": [\"pattern\", ...], \"per_ip_limits\": \"on|off\", \"new_wallets_per_ip_hour\": n, \"invokes_per_ip_minute\": n}")
 		return sessionPolicyChange{}, false
 	}
 	if req.DevicePolicy == nil && req.SignIn == nil && req.EndUserTopics == nil &&
 		req.PerIPLimits == nil && req.NewWalletsPerIPHour == nil && req.InvokesPerIPMinute == nil {
-		writeError(w, http.StatusBadRequest, "send device_policy (optional|required|approval), sign_in (members|open), end_user_topics (a list of topic patterns), per_ip_limits (on|off), new_wallets_per_ip_hour, invokes_per_ip_minute, or several")
+		writeError(w, http.StatusBadRequest, "send device_policy (optional|required|approval|function), sign_in (members|open), end_user_topics (a list of topic patterns), per_ip_limits (on|off), new_wallets_per_ip_hour, invokes_per_ip_minute, or several")
 		return sessionPolicyChange{}, false
 	}
 	var change sessionPolicyChange

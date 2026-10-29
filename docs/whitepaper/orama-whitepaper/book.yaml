@@ -15,7 +15,7 @@
 
 title: Orama Whitepaper
 subtitle: Technical Edition
-version: 0.3.11
+version: 0.3.13
 ownership: false
 max_words_total: 40000
 output: orama-whitepaper
@@ -40,116 +40,116 @@ volumes:
           - file: ch01-what-orama-is.md
             title: What Orama is
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
           - file: ch02-system-shape-and-one-request.md
             title: System shape and one request
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
       - title: Part II The Platform
         chapters:
           - file: ch03-the-node-and-the-mesh.md
             title: The node and the mesh
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch04-cluster-state-and-membership.md
             title: Cluster state and membership
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch05-namespaces-and-deployments.md
             title: Namespaces and deployments
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch06-the-gateway.md
             title: The gateway
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch07-identity-authorization-and-trust.md
             title: Identity, authorization and trust
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch08-secrets-keys-and-the-vault.md
             title: Secrets, keys and the vault
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch09-data-services.md
             title: Data services
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch10-compute-and-realtime.md
             title: Compute and realtime
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch11-the-edge.md
             title: The edge
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1900
           - file: ch12-shipping-and-operating.md
             title: Shipping and operating
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 2400
           - file: ch13-cli-and-sdks.md
             title: The CLI and SDKs
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
       - title: Part III The Global Layer
         chapters:
           - file: ch14-global-nodes.md
             title: Global nodes
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
           - file: ch15-anonymity-and-tor.md
             title: Anonymity and Tor
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
           - file: ch16-the-chain.md
             title: The chain
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 2400
           - file: ch17-economics.md
             title: Economics
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
           - file: ch18-storage-deals-archive-and-indexer.md
             title: Storage deals, archive and indexer
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
           - file: ch19-shielded-pool-governance-and-nfts.md
             title: The shielded pool, governance and NFTs
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 2400
           - file: ch20-relay-rewards.md
             title: Relay rewards
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1500
       - title: Part IV Reference
         chapters:
           - file: ch21-known-limits.md
             title: Known limits
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 2200
           - file: ch22-glossary-and-ports.md
             title: Glossary and ports
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             max_words: 1200

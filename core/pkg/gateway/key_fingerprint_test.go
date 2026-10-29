@@ -101,6 +101,7 @@ func TestKeyFingerprint_theHopMACCoversIt(t *testing.T) {
 func TestKeyFingerprint_aV4HopCarriesNone(t *testing.T) {
 	g, _ := namespaceGatewayForHops(t, "runtime")
 	r := fingerprintHop(t, g, "key_0123456789ab")
+	r.Header.Del(HeaderInternalAuthMACv8)
 	r.Header.Del(HeaderInternalAuthMACv7)
 	r.Header.Del(HeaderInternalAuthMACv6)
 	r.Header.Del(HeaderInternalAuthMACv5)

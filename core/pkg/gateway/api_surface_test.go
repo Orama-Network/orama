@@ -101,7 +101,7 @@ func literalMuxPatterns(t *testing.T, path string) []string {
 func documentedRoutes(t *testing.T) map[string]string {
 	t.Helper()
 
-	body, err := os.ReadFile(filepath.Join(repoRootFor(t), "docs/whitepaper/technical-reference/appendices/i-api-surface.md"))
+	body, err := os.ReadFile(filepath.Join(linkedRepo, "docs/whitepaper/technical-reference/appendices/i-api-surface.md"))
 	if err != nil {
 		t.Fatalf("read i-api-surface.md: %v", err)
 	}
@@ -119,6 +119,11 @@ func documentedRoutes(t *testing.T) map[string]string {
 	}
 	return out
 }
+
+// linkedRepo is the repository as core/testdata/repo links it in. The docs
+// these tests check live above the module; reading them through a path inside
+// it is what makes the go test cache treat them as inputs.
+var linkedRepo = filepath.Join("..", "..", "testdata", "repo")
 
 func repoRootFor(t *testing.T) string {
 	t.Helper()
@@ -191,7 +196,7 @@ func TestEveryDocumentedRouteHasAnOwner(t *testing.T) {
 // routes" sentence) are the number of rows it has, per owner. They drifted
 // whenever a route was added and only the row was written.
 func TestDocumentedOwnerCountsMatchRows(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRootFor(t), "docs/whitepaper/technical-reference/appendices/i-api-surface.md"))
+	body, err := os.ReadFile(filepath.Join(linkedRepo, "docs/whitepaper/technical-reference/appendices/i-api-surface.md"))
 	if err != nil {
 		t.Fatalf("read i-api-surface.md: %v", err)
 	}

@@ -32,12 +32,10 @@ func TestDeviceRevoke_reachesEveryGateway(t *testing.T) {
 	if _, err := c.For(t).RevokeDevice(t.Context(), keptS.AccessToken, lost.ID(), proof(t, kept, wallet.ProofRevoke, n.Name, lost.ID())); err != nil {
 		t.Fatalf("revoking a lost device from the kept one: %v", err)
 	}
-	refusedEverywhere(t, gateways, lostS.AccessToken, "the revoked device's access token")
+	deviceRevokedEverywhere(t, gateways, lostS.AccessToken, "the revoked device's access token")
 	acceptedEverywhere(t, gateways, keptS.AccessToken, "the other device's token")
 	resp := refreshWith(t, c, lostS.RefreshToken, n.Name, proof(t, lost, wallet.ProofRefresh, n.Name, lostS.RefreshToken))
-	if resp.Status != http.StatusUnauthorized && resp.Status != http.StatusForbidden {
-		t.Errorf("the revoked device renewed its session: %d %s", resp.Status, resp.Body)
-	}
+	expectCode(t, resp, http.StatusForbidden, codeDeviceRevoked)
 	listed, _, err := c.For(t).Devices(t.Context(), keptS.AccessToken)
 	if err != nil {
 		t.Fatal(err)

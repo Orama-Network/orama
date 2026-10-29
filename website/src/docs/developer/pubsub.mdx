@@ -65,7 +65,7 @@ const subscription = await client.pubsub.subscribe("notifications", {
 subscription.close();
 ```
 
-A subscription opened with a signed-in session is held to that session's token: the gateway closes it with `4403` within 10 seconds of the token being revoked, and with `4401` two minutes after the token expires. Subscribe again with a fresh token to continue.
+A subscription opened with a signed-in session is held to that session's token: the gateway closes it with `4403` within 10 seconds of the token being revoked, with `4410` when the token's device is revoked, and with `4401` two minutes after the token expires. Subscribe again with a fresh token to continue.
 
 ### Multiple Subscribers
 

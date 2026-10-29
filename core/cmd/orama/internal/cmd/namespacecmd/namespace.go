@@ -81,7 +81,16 @@ var webrtcStatusCmd = &cobra.Command{
 var keysCmd = &cobra.Command{
 	Use:   "keys",
 	Short: "Manage scoped API keys (bugboard #148)",
-	Long:  "Create, list, and revoke scoped API keys. Profiles: invoke-only | app-runtime | admin.",
+	Long: `Create, list, rotate and revoke a namespace's scoped API keys. Profiles:
+invoke-only | app-runtime | admin.
+
+Who may run these: the namespace's owner or an admin member, signed in with
+'orama auth login --namespace <ns>' (RootWallet signs the challenge), or an
+admin-scope key in ORAMA_TOKEN. A developer, runtime or reader member, and a key
+holding anything less than admin, is refused with INSUFFICIENT_SCOPE: managing
+keys is handing out authority. 'orama auth whoami' shows the role a credential
+holds. The commands act on the namespace the credential belongs to; --namespace
+picks which signed-in session to use.`,
 }
 
 var keysCreateCmd = &cobra.Command{
@@ -157,9 +166,12 @@ left out keeps its value.
                       wallet reaches. Closing it again ends those sessions at
                       their next refresh. A namespace nobody owns stays closed.
 
-  --device-policy     optional | required | approval: what an end user's
-                      sign-in must bind. Requiring devices revokes the sign-in
-                      keys end users already hold.
+  --device-policy     optional | required | approval | function: what an end
+                      user's sign-in must bind. Requiring devices revokes the
+                      sign-in keys end users already hold. function: an
+                      account's first device is active, and each later one
+                      gets a restricted session until one of the namespace's
+                      functions approves it (approve_device).
 
   --end-user-topics   the pub/sub topics an end user may subscribe to, list and
                       see presence on, comma-separated patterns ('*' matches any
@@ -264,7 +276,7 @@ func init() {
 	webrtcStatusCmd.Flags().String("namespace", "", "Namespace name")
 	sessionPolicyCmd.Flags().String("namespace", "", "Namespace name")
 	sessionPolicyCmd.Flags().String("sign-in", "", "Who may sign in: members | open")
-	sessionPolicyCmd.Flags().String("device-policy", "", "What an end user's sign-in must bind: optional | required | approval")
+	sessionPolicyCmd.Flags().String("device-policy", "", "What an end user's sign-in must bind: optional | required | approval | function")
 	sessionPolicyCmd.Flags().StringSlice("end-user-topics", nil, "Pub/sub topic patterns end users may read, comma-separated; '' clears the list")
 	sessionPolicyCmd.Flags().String("per-ip-limits", "", "Per-client-network ceilings: on | off")
 	sessionPolicyCmd.Flags().Int("new-wallets-per-ip-hour", 0, "When per-IP limits are on: new wallets one network may sign in per hour")

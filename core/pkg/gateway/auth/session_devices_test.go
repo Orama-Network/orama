@@ -140,7 +140,7 @@ func TestRefreshToken_needsTheDeviceAndRevocationEndsIt(t *testing.T) {
 		t.Fatalf("the rotated token lost its binding: %+v %v", nextClaims, err)
 	}
 
-	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, d.id); err != nil {
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, d.id, byAccount); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if !mustRevoked(s, nextClaims) {
@@ -168,7 +168,7 @@ func TestRevokeDevice_leavesTheAccountsOtherDevices(t *testing.T) {
 		t.Fatalf("issue: %v", err)
 	}
 
-	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id); err != nil {
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id, byAccount); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	if _, err := s.ParseAndVerifyJWT(keptAccess); err != nil {
@@ -183,10 +183,10 @@ func TestRevokeDevice_leavesTheAccountsOtherDevices(t *testing.T) {
 	}
 	// Somebody else's account cannot revoke it, and revoking twice finishes
 	// rather than refuses.
-	if err := s.RevokeDevice(ctx, "anchat", "0xb0b", kept.id); !errors.Is(err, ErrDeviceNotFound) {
+	if err := s.RevokeDevice(ctx, "anchat", "0xb0b", kept.id, byAccount); !errors.Is(err, ErrDeviceNotFound) {
 		t.Errorf("another account revoked this one's device: %v", err)
 	}
-	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id); err != nil {
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, lost.id, byAccount); err != nil {
 		t.Errorf("repeating a revocation failed: %v", err)
 	}
 }

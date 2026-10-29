@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { WSClient } from '../../../src/core/ws';
+import { WSClient, WSCloseCode } from '../../../src/core/ws';
 
 /**
  * There was no reconnection. A dropped socket stayed dropped and the
@@ -153,6 +153,24 @@ describe('a dropped connection is re-established', () => {
 
     expect(closes).toEqual([1000]);
     expect(FakeSocket.instances).toHaveLength(1);
+  });
+
+  /**
+   * feat-976: the gateway closes a revoked device's socket with 4410. A
+   * reconnect with the same token can never succeed, and retrying would hide
+   * from the application that the device was revoked.
+   */
+  it('does not reconnect a revoked device, and reports the close', async () => {
+    const ws = client();
+    const closes: number[] = [];
+    ws.onClose((code) => closes.push(code));
+
+    const first = await connected(ws);
+    first.drop(WSCloseCode.DeviceRevoked);
+    await settle();
+
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(closes).toEqual([4410]);
   });
 
   it('stops trying once the caller has closed', async () => {

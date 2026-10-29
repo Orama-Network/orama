@@ -19,9 +19,16 @@ var gateScripts = []string{
 
 const nameWordCheck = `case "$chain_name" in localnet | devnet | testnet) chain_class="" ;; esac`
 
+// repoFile reads rel, a path from the repository root: a chain/ file from this
+// module, any other through chain/testdata/repo, which links it in so the go
+// test cache sees it as an input.
 func repoFile(t *testing.T, rel string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", rel))
+	path := filepath.Join("..", "..", "testdata", "repo", rel)
+	if rest, ok := strings.CutPrefix(rel, "chain/"); ok {
+		path = filepath.Join("..", "..", rest)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}

@@ -97,11 +97,20 @@ func raw(s string) json.RawMessage {
 func dispatch(req request) any {
 	switch req.Op {
 	case "whoami":
-		return map[string]any{
+		// With value "send" the answer also goes to the socket, as a
+		// function_invoke_async target's must.
+		out := map[string]any{
 			"wallet": unpack(getCallerWallet()), "subject": unpack(getCallerJWTSubject()),
 			"device": unpack(getCallerDeviceID()), "request_id": unpack(getRequestID()),
 			"env": unpack(getEnv(ptr(req.Key), size(req.Key))), "ws_client": unpack(getWSClientID()),
+			"verdict": raw(unpack(getCallerAttestationVerdict())), "id": req.Key,
 		}
+		if req.Value == "send" {
+			b, _ := json.Marshal(out)
+			msg, client := string(b), unpack(getWSClientID())
+			wsSend(ptr(client), size(client), ptr(msg), size(msg))
+		}
+		return out
 	case "secret":
 		return map[string]any{"value": unpack(getSecret(ptr(req.Name), size(req.Name)))}
 	case "echo":

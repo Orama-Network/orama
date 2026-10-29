@@ -18,7 +18,7 @@ type sealVector struct {
 func loadSealVector(t *testing.T) sealVector {
 	t.Helper()
 	// .../core/pkg/gateway/handlers/enroll -> repo root
-	path := filepath.Join("..", "..", "..", "..", "..", "contracts", "enrollment", "seal.json")
+	path := filepath.Join("..", "..", "..", "..", "testdata", "repo", "contracts", "enrollment", "seal.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

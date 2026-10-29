@@ -23,6 +23,12 @@ func (r *recordingWebRTC) Admit(_ context.Context, ns, room, user, device string
 	return r.expires, r.err
 }
 
+func (r *recordingWebRTC) AdmitWithMutes(_ context.Context, ns, room, user, device string, ttl time.Duration, mutes serverless.WebRTCMutes) (time.Time, error) {
+	r.calls = append(r.calls, strings.Join([]string{"admit", ns, room, user, device, ttl.String(),
+		muteVerb("", mutes.Muted), muteVerb("video-", mutes.VideoMuted)}, "|"))
+	return r.expires, r.err
+}
+
 func (r *recordingWebRTC) Kick(_ context.Context, ns, room, user string) error {
 	r.calls = append(r.calls, strings.Join([]string{"kick", ns, room, user}, "|"))
 	return r.err
@@ -79,6 +85,33 @@ func TestWebRTCAdmit_actsOnTheCallersOwnNamespace(t *testing.T) {
 	}
 	if got["room"] != "room-1" || got["user_id"] != "0xalice" || got["device_id"] != "phone" || got["expires_at"] != float64(1_800_003_600) {
 		t.Fatalf("admission = %v", got)
+	}
+}
+
+// feat-972: the stated mutes reach the controller with the admission, and the
+// admission reports them.
+func TestWebRTCAdmitWithMutes_statesTheMutesWithTheAdmission(t *testing.T) {
+	c := &recordingWebRTC{expires: time.Unix(1_800_003_600, 0)}
+	h, ctx := webrtcHost(c)
+
+	out, err := h.WebRTCAdmitWithMutes(ctx, "room-1", "0xalice", "did-phone", time.Hour, serverless.WebRTCMutes{Muted: true, VideoMuted: true})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.calls) != 1 || c.calls[0] != "admit|anchat|room-1|0xalice|did-phone|1h0m0s|mute|video-mute" {
+		t.Fatalf("calls = %v, want one admission with both mutes in the caller's namespace", c.calls)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"room": "room-1", "user_id": "0xalice", "device_id": "did-phone",
+		"expires_at": float64(1_800_003_600), "muted": true, "video_muted": true}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v (all: %v)", k, got[k], v, got)
+		}
 	}
 }
 
@@ -152,14 +185,16 @@ func TestWebRTCHostCalls_controllerErrorsAreHostFunctionErrors(t *testing.T) {
 	h, ctx := webrtcHost(c)
 
 	_, errAdmit := h.WebRTCAdmit(ctx, "r", "u", "", time.Minute)
+	_, errAdmitWithMutes := h.WebRTCAdmitWithMutes(ctx, "r", "u", "", time.Minute, serverless.WebRTCMutes{Muted: true})
 	_, errAdmission := h.WebRTCAdmission(ctx, "r", "u", "")
 	for name, err := range map[string]error{
-		"admit":       errAdmit,
-		"kick":        h.WebRTCKick(ctx, "r", "u"),
-		"kick_device": h.WebRTCKickDevice(ctx, "r", "u", "d"),
-		"mute":        h.WebRTCMute(ctx, "r", "u", true),
-		"mute_video":  h.WebRTCMuteVideo(ctx, "r", "u", true),
-		"admission":   errAdmission,
+		"admit":            errAdmit,
+		"admit_with_mutes": errAdmitWithMutes,
+		"kick":             h.WebRTCKick(ctx, "r", "u"),
+		"kick_device":      h.WebRTCKickDevice(ctx, "r", "u", "d"),
+		"mute":             h.WebRTCMute(ctx, "r", "u", true),
+		"mute_video":       h.WebRTCMuteVideo(ctx, "r", "u", true),
+		"admission":        errAdmission,
 	} {
 		var hfe *serverless.HostFunctionError
 		if !errors.As(err, &hfe) || !errors.Is(err, boom) || hfe.Function != "webrtc_"+name {
@@ -206,14 +241,16 @@ func TestWebRTCHostCalls_budgetIsPerInvocation(t *testing.T) {
 		}
 	}
 	_, errAdmit := h.WebRTCAdmit(ctx, "r", "u", "", time.Minute)
+	_, errAdmitWithMutes := h.WebRTCAdmitWithMutes(ctx, "r", "u", "", time.Minute, serverless.WebRTCMutes{Muted: true})
 	_, errAdmission := h.WebRTCAdmission(ctx, "r", "u", "")
 	for name, err := range map[string]error{
-		"admit":       errAdmit,
-		"kick":        h.WebRTCKick(ctx, "r", "u"),
-		"kick_device": h.WebRTCKickDevice(ctx, "r", "u", "d"),
-		"mute":        h.WebRTCMute(ctx, "r", "u", true),
-		"mute_video":  h.WebRTCMuteVideo(ctx, "r", "u", true),
-		"admission":   errAdmission,
+		"admit":            errAdmit,
+		"admit_with_mutes": errAdmitWithMutes,
+		"kick":             h.WebRTCKick(ctx, "r", "u"),
+		"kick_device":      h.WebRTCKickDevice(ctx, "r", "u", "d"),
+		"mute":             h.WebRTCMute(ctx, "r", "u", true),
+		"mute_video":       h.WebRTCMuteVideo(ctx, "r", "u", true),
+		"admission":        errAdmission,
 	} {
 		var hfe *serverless.HostFunctionError
 		if !errors.As(err, &hfe) || !errors.Is(err, ErrWebRTCBudgetExceeded) || hfe.Function != "webrtc_"+name {

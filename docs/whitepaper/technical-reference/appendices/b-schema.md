@@ -527,6 +527,8 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `rate_limit_ip_requests` | INTEGER | yes | `0` |  |
 | `rate_limit_ip_window_sec` | INTEGER | yes | `0` |  |
 | `wasm_sha256` | TEXT | no | - |  |
+| `invocable_by` | TEXT | yes | `''` |  |
+| `open_to_pending_devices` | BOOLEAN | yes | `FALSE` |  |
 
 ## global_deployment_subdomains
 
@@ -1045,6 +1047,9 @@ Placement says which database holds a table: `Cluster` tables live only in the c
 | `created_at` | TIMESTAMP | yes | `CURRENT_TIMESTAMP` |  |
 | `activated_at` | TIMESTAMP | no | - |  |
 | `revoked_at` | TIMESTAMP | no | - |  |
+| `revoked_by` | TEXT | no | - |  |
+| `revocation_proof` | TEXT | no | - |  |
+| `revocation_evidence` | TEXT | no | - |  |
 
 ## signing_keys
 

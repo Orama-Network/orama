@@ -23,8 +23,14 @@ const (
 	// not one this route will reach. Distinct from every other code here
 	// because retrying with a different credential will not help.
 	CodeDestinationNotAllowed = "DESTINATION_NOT_ALLOWED"
-	// CodeAuthRevoked — the credential was valid and has been revoked.
+	// CodeAuthRevoked — the credential was valid and has been revoked: the
+	// token itself, its session, the key it came from, or every session of
+	// its account. Not a revoked device, which is CodeDeviceRevoked.
 	CodeAuthRevoked = "AUTH_REVOKED"
+	// CodeDeviceRevoked — the token is refused because the device it is bound
+	// to was revoked. The answer's `revocation` says who revoked it and what
+	// proves it (feat-976): the client checks it before it acts on it.
+	CodeDeviceRevoked = "DEVICE_REVOKED"
 	// CodeAuthUnavailable — the gateway could not tell whether the credential
 	// was revoked (the revocation list is older than its bound and the registry
 	// cannot be read). Answered with a 503: the credential may be fine, so
@@ -47,8 +53,10 @@ const (
 	CodeAuthUserJWTRequiredWire = "USER_JWT_REQUIRED"
 	// CodeNamespaceMismatch — the credential belongs to another namespace.
 	CodeNamespaceMismatch = "NAMESPACE_MISMATCH"
-	// CodeOwnershipRequired — the credential is valid, in the right namespace,
-	// and is not an owner of it.
+	// CodeOwnershipRequired — the credential is valid and in the right
+	// namespace, and either holds no grant in it or is asking for an act only
+	// the owner may do (transfer, backup and restore, the raw database). The
+	// message says which.
 	CodeOwnershipRequired = "OWNERSHIP_REQUIRED"
 	// CodeOriginNotAllowed — a WebSocket upgrade from a page on another site.
 	CodeOriginNotAllowed = "ORIGIN_NOT_ALLOWED"
@@ -76,6 +84,11 @@ const (
 	CodeAttestationInvalid = "ATTESTATION_INVALID"
 	// CodeAppUpdateRequired — the build is older than the namespace admits.
 	CodeAppUpdateRequired = "APP_UPDATE_REQUIRED"
+
+	// CodeDevicePendingApproval — the caller's session is a pending device's
+	// restricted one (the function device policy, feat-973), on a route that
+	// does not admit it.
+	CodeDevicePendingApproval = "DEVICE_PENDING_APPROVAL"
 )
 
 // authHints are what to do about each refusal. They are here rather than at the
@@ -84,12 +97,13 @@ var authHints = map[string]string{
 	CodeAuthMissing:           "send the credential in an Authorization header, or X-API-Key",
 	CodeAuthInvalidKey:        "check the key is for this cluster and has not been deleted",
 	CodeAuthRevoked:           "this credential or session was revoked; sign in again or use a new key",
+	CodeDeviceRevoked:         "this device was revoked and its key can never hold a session again; check revocation before acting on it",
 	CodeAuthUnavailable:       "this is temporary; retry in a few seconds with the same credential",
 	CodeAuthExpired:           "refresh the token, or sign in again",
 	CodeAuthUserJWTRequired:   "exchange the key for a token, or sign in as a user",
 	CodeScopeMissing:          "mint a key with the grant named in required_scope",
 	CodeNamespaceMismatch:     "use a credential belonging to this namespace",
-	CodeOwnershipRequired:     "use the namespace owner's credential, or an admin key for this namespace",
+	CodeOwnershipRequired:     "use a credential that belongs to this namespace (a member's wallet session or a key minted in it); an act only the owner may do needs the owner's wallet",
 	CodeOriginNotAllowed:      "open the socket from a page served by this host, or from a client that sends no Origin",
 	CodeOperatorRequired:      "sign in with a wallet on this cluster's operator list; no namespace role or API key is an operator's credential",
 	CodeNamespaceQuota:        "the wallet has to delete a namespace, or hand one on, before it can own another",
@@ -98,6 +112,7 @@ var authHints = map[string]string{
 	CodeAttestationRequired:   "attest this device (POST /v1/attest/challenge, then /v1/attest/ios or /v1/attest/android) and use the token it returns",
 	CodeAttestationInvalid:    "this build, device or OS is not one the namespace admits; only the namespace's own app on a genuine device is",
 	CodeAppUpdateRequired:     "update the app to a build the namespace still admits",
+	CodeDevicePendingApproval: "finish the application's own admission of this device (its functions open to pending devices), then refresh the session",
 }
 
 // writeAuthError writes a refusal a client can act on without reading English.

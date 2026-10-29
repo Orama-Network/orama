@@ -12,7 +12,7 @@ import (
 // The pins in create_genesis.go and the values oramad refuses a production genesis for must be one
 // number. The chain's side is read from its source, which sits beside core/.
 func TestConsensusConstants_equalTheChainsPins(t *testing.T) {
-	data, err := os.ReadFile("../../../../../chain/app/consensus_params.go")
+	data, err := os.ReadFile("../../../../testdata/repo/chain/app/consensus_params.go")
 	if err != nil {
 		t.Skipf("the chain sources are not reachable from here: %v", err)
 	}
@@ -105,7 +105,7 @@ func checkEvidenceWindow(t *testing.T, chainSrc string) {
 			t.Fatalf("chain/app/consensus_params.go no longer derives the evidence window as %q: update setup/create_genesis.go", derivation)
 		}
 	}
-	params, err := os.ReadFile("../../../../../chain/app/params/params.go")
+	params, err := os.ReadFile("../../../../testdata/repo/chain/app/params/params.go")
 	if err != nil {
 		t.Fatalf("read the chain's params: %v", err)
 	}

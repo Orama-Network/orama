@@ -63,6 +63,20 @@ type FunctionConfig struct {
 	// checked by the gateway on top of its own per-caller and per-namespace
 	// buckets. The gateway validates the ranges at deploy.
 	RateLimit *RateLimitConfig `yaml:"rate_limit"`
+
+	// InvocableBy names the functions of the namespace that may invoke this
+	// one with function_invoke or function_invoke_async (feat-971); a client
+	// invoking it directly is refused 403 FUNCTION_NOT_DIRECTLY_INVOCABLE.
+	// Empty = any caller the public/private rule admits. The gateway checks
+	// at deploy that each name is a deployed function.
+	InvocableBy []string `yaml:"invocable_by"`
+
+	// OpenToPendingDevices lets a pending device's restricted session (the
+	// namespace's function device policy, feat-973) invoke the function and
+	// open its WebSocket: the functions that carry out the namespace's own
+	// admission of a new device. False refuses one 403
+	// DEVICE_PENDING_APPROVAL.
+	OpenToPendingDevices bool `yaml:"open_to_pending_devices"`
 }
 
 // RateLimitConfig is function.yaml's rate_limit. Each rule allows `requests`
@@ -174,6 +188,11 @@ func LoadConfig(dir string) (*FunctionConfig, error) {
 	}
 	if _, err := rateLimitMetadata(cfg.RateLimit); err != nil {
 		return nil, fmt.Errorf("function.yaml: %w", err)
+	}
+	for _, parent := range cfg.InvocableBy {
+		if !validNameRegex.MatchString(parent) {
+			return nil, fmt.Errorf("function.yaml: 'invocable_by' names %q, which is not a function name", parent)
+		}
 	}
 
 	return &cfg, nil
@@ -356,6 +375,12 @@ func uploadWASMFunction(wasmPath string, cfg *FunctionConfig) (map[string]interf
 	}
 	if rateLimit != nil {
 		metaObj["rate_limit"] = rateLimit
+	}
+	if len(cfg.InvocableBy) > 0 {
+		metaObj["invocable_by"] = cfg.InvocableBy
+	}
+	if cfg.OpenToPendingDevices {
+		metaObj["open_to_pending_devices"] = true
 	}
 	if len(metaObj) > 0 {
 		metadata, _ := json.Marshal(metaObj)

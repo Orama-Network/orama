@@ -24,7 +24,9 @@ type DeviceState string
 
 const (
 	// DeviceStatePending is a device a wallet signature enrolled in a namespace
-	// that requires an existing device's approval. It holds no session.
+	// that requires its approval. Under the approval policy it holds no
+	// session; under the function policy it holds a pending device's
+	// restricted one (AudiencePendingDevice).
 	DeviceStatePending DeviceState = "pending"
 	// DeviceStateActive may hold sessions.
 	DeviceStateActive DeviceState = "active"
@@ -40,8 +42,15 @@ var (
 	ErrDeviceNotFound = errors.New("no such device on this account")
 	// ErrDeviceRevoked is a device that was revoked. Its key is done.
 	ErrDeviceRevoked = errors.New("this device was revoked; it cannot sign in or hold a session again")
-	// ErrDevicePending is a device still waiting for another device's approval.
-	ErrDevicePending = errors.New("this device is waiting to be approved from another of the account's devices")
+	// ErrDevicePending is a device still waiting to be approved: from another
+	// of the account's devices under the approval policy, by the namespace's
+	// own functions under the function policy.
+	ErrDevicePending = errors.New("this device is waiting to be approved")
+	// ErrDevicePendingApproval is a pending device's restricted session asking
+	// for something it does not reach: anything but its own session, its own
+	// attestation and the functions open to pending devices.
+	ErrDevicePendingApproval = errors.New("this session's device is pending approval: until the namespace approves it, " +
+		"it reaches only its own session and the functions the namespace opened to pending devices")
 	// ErrDeviceBelongsToAnother is a device key already enrolled for a
 	// different account or namespace. A key is one installation's, and an
 	// installation is one account's.
@@ -59,6 +68,10 @@ type SessionDevice struct {
 	CreatedAt   time.Time
 	ActivatedAt time.Time
 	RevokedAt   time.Time
+	// Revocation is how a revoked device was revoked, as Device reads it;
+	// nil for a device that is not revoked, and on the rows ListDevices
+	// returns.
+	Revocation *DeviceRevocationRecord
 }
 
 // Key parses the device's stored public key.
@@ -72,6 +85,11 @@ func (d *SessionDevice) Key() (*DeviceKey, error) {
 
 const sessionDeviceColumns = `id, subject, label, state, COALESCE(approved_by_device, ''), public_key,
 	created_at, activated_at, revoked_at`
+
+// sessionDeviceRevocationColumns follow sessionDeviceColumns where one device
+// is read: what its revocation was, NULL on a device that is not revoked.
+const sessionDeviceRevocationColumns = `, COALESCE(revoked_by, ''), COALESCE(revocation_proof, ''),
+	COALESCE(revocation_evidence, '')`
 
 func sessionDeviceFromRow(row []interface{}) SessionDevice {
 	created, _, _ := parseTimestamp(row[6])
@@ -97,15 +115,19 @@ func (s *Service) Device(ctx context.Context, namespace, id string) (*SessionDev
 		return nil, err
 	}
 	res, err := db.Query(client.WithInternalAuth(ctx),
-		`SELECT `+sessionDeviceColumns+` FROM session_devices WHERE id = ? AND namespace_id = ? LIMIT 1`,
+		`SELECT `+sessionDeviceColumns+sessionDeviceRevocationColumns+` FROM session_devices WHERE id = ? AND namespace_id = ? LIMIT 1`,
 		id, nsID)
 	if err != nil {
 		return nil, fmt.Errorf("read device %s: %w", id, err)
 	}
-	if res == nil || len(res.Rows) == 0 || len(res.Rows[0]) < 9 {
+	if res == nil || len(res.Rows) == 0 || len(res.Rows[0]) < 12 {
 		return nil, ErrDeviceNotFound
 	}
-	d := sessionDeviceFromRow(res.Rows[0])
+	row := res.Rows[0]
+	d := sessionDeviceFromRow(row)
+	if d.State == DeviceStateRevoked {
+		d.Revocation = revocationRecord(d.ID, d.RevokedAt, getStringVal(row[9]), getStringVal(row[10]), getStringVal(row[11]))
+	}
 	return &d, nil
 }
 
@@ -203,7 +225,7 @@ func (s *Service) settleEnrolment(ctx context.Context, subject string, d *Sessio
 	case d.Subject != subject:
 		return nil, ErrDeviceBelongsToAnother
 	case d.State == DeviceStateRevoked:
-		return nil, ErrDeviceRevoked
+		return nil, revokedError(d)
 	case d.State == DeviceStatePending && want == DeviceStateActive:
 		if err := s.activateDevice(ctx, d.ID, approvedBy); err != nil {
 			return nil, err
@@ -266,7 +288,7 @@ func (s *Service) RequireActiveDevice(ctx context.Context, namespace, subject, i
 	case d.Subject != subject:
 		return nil, ErrDeviceNotFound
 	case d.State == DeviceStateRevoked:
-		return nil, ErrDeviceRevoked
+		return nil, revokedError(d)
 	case d.State == DeviceStatePending:
 		return nil, ErrDevicePending
 	}
@@ -285,10 +307,14 @@ func (s *Service) deviceRegistry(ctx context.Context, namespace string) (client.
 		return nil, nil, fmt.Errorf("resolve the namespace %q: %w", namespace, err)
 	}
 	if nsID == nil {
-		return nil, nil, fmt.Errorf("no namespace %q", namespace)
+		return nil, nil, fmt.Errorf("%w: %q", ErrNoNamespace, namespace)
 	}
 	return db, nsID, nil
 }
+
+// ErrNoNamespace is a device or session call for a namespace the registry
+// does not hold, a deleted one included.
+var ErrNoNamespace = errors.New("no such namespace")
 
 // sessionNamespace is the namespace a session call names, read the way
 // ResolveNamespaceID reads it: none is the lobby. The CLI refreshes with

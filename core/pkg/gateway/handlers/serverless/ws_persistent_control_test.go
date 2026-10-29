@@ -1,11 +1,13 @@
 package serverless
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 
 	"github.com/Orama-Network/orama/core/pkg/gateway/auth"
+	"go.uber.org/zap"
 )
 
 // fakeJWTVerifier lets us drive ParseAndVerifyJWT outcomes from tests
@@ -14,6 +16,16 @@ type fakeJWTVerifier struct {
 	claims *auth.JWTClaims
 	err    error
 	calls  int
+	// revocation and revocationErr answer DeviceRevocationRecord; asked
+	// records the device it was asked for.
+	revocation    *auth.DeviceRevocationRecord
+	revocationErr error
+	asked         string
+}
+
+func (f *fakeJWTVerifier) DeviceRevocationRecord(_ context.Context, namespace, id string) (*auth.DeviceRevocationRecord, error) {
+	f.asked = namespace + "/" + id
+	return f.revocation, f.revocationErr
 }
 
 func (f *fakeJWTVerifier) ParseAndVerifyJWT(token string) (*auth.JWTClaims, error) {
@@ -226,4 +238,62 @@ func containsBytes(haystack, needle []byte) bool {
 
 func contains(haystack, needle string) bool {
 	return containsBytes([]byte(haystack), []byte(needle))
+}
+
+// feat-976: an auth.refresh refused because the token's device was revoked
+// is acked DEVICE_REVOKED with the device's revocation, the record a 403
+// DEVICE_REVOKED carries; a token refused for anything else is acked as
+// before, and its device's registry row is never read.
+func TestRefusedRefreshAck_aRevokedDeviceIsToldItsRevocation(t *testing.T) {
+	rec := &auth.DeviceRevocationRecord{DeviceID: "dev-1", RevokedBy: auth.RevokedByFunction}
+	revokedDevice := &auth.DeviceTokenRevokedError{Claims: &auth.JWTClaims{Namespace: "anchat", Did: "dev-1"}}
+
+	t.Run("revoked device", func(t *testing.T) {
+		v := &fakeJWTVerifier{revocation: rec}
+		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), revokedDevice, "c1")
+		if ack.OK || ack.Code != ackCodeDeviceRevoked || ack.Revocation != rec {
+			t.Fatalf("ack = %+v, want ok:false, code %s, the device's revocation", ack, ackCodeDeviceRevoked)
+		}
+		if v.asked != "anchat/dev-1" {
+			t.Errorf("read the revocation of %q, want anchat/dev-1", v.asked)
+		}
+		raw, _ := json.Marshal(ack)
+		if !contains(string(raw), `"code":"DEVICE_REVOKED"`) || !contains(string(raw), `"revocation":{`) {
+			t.Errorf("ack on the wire = %s, want code and revocation", raw)
+		}
+	})
+	t.Run("registry unreadable", func(t *testing.T) {
+		v := &fakeJWTVerifier{revocationErr: errors.New("rqlite: no leader")}
+		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), revokedDevice, "c1")
+		if ack.Error != authRefreshUnavailableMessage || ack.Code != "" || ack.Revocation != nil {
+			t.Errorf("ack = %+v, want the retryable refusal with no code", ack)
+		}
+	})
+	// feat-976 review: a device the registry does not hold revoked is never
+	// told it is; its token is refused as any revoked token is.
+	t.Run("device not in the registry", func(t *testing.T) {
+		v := &fakeJWTVerifier{revocationErr: auth.ErrDeviceNotRevoked}
+		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), revokedDevice, "c1")
+		if ack.OK || ack.Code != "" || ack.Revocation != nil || ack.Error == authRefreshUnavailableMessage {
+			t.Errorf("ack = %+v, want a plain refusal, neither DEVICE_REVOKED nor retryable", ack)
+		}
+	})
+	t.Run("revoked session", func(t *testing.T) {
+		v := &fakeJWTVerifier{revocation: rec}
+		h := &ServerlessHandlers{jwtVerifier: v, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), auth.ErrTokenRevoked, "c1")
+		if ack.OK || ack.Code != "" || ack.Revocation != nil || v.asked != "" {
+			t.Errorf("ack = %+v (asked %q), want a plain refusal that reads no device", ack, v.asked)
+		}
+	})
+	t.Run("revocation list unreadable", func(t *testing.T) {
+		h := &ServerlessHandlers{jwtVerifier: &fakeJWTVerifier{}, logger: zap.NewNop()}
+		ack := h.refusedRefreshAck(context.Background(), auth.ErrRevocationsUnavailable, "c1")
+		if ack.Error != authRefreshUnavailableMessage {
+			t.Errorf("ack = %+v, want the retryable refusal", ack)
+		}
+	})
 }

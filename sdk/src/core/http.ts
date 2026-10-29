@@ -152,6 +152,26 @@ const NOT_SESSION_REFUSALS = new Set<string>([
   AuthCode.AttestationNeedsDevice,
 ]);
 
+/**
+ * The routes that establish a session rather than use one: signing in with a
+ * wallet, renewing with a refresh token, linking a device, and creating an API
+ * key with a wallet signature. Each carries its credential in the body, and the
+ * gateway reads no bearer token on them.
+ *
+ * The client's stored token is not sent to them. A device that was revoked
+ * still holds its old token; sent along, it is refused DEVICE_REVOKED before
+ * the sign-in it came to make is looked at, and the device could never sign in
+ * again.
+ */
+const SESSION_ESTABLISHING_PATHS = new Set<string>([
+  "/v1/auth/challenge",
+  "/v1/auth/verify",
+  "/v1/auth/refresh",
+  "/v1/auth/device",
+  "/v1/auth/device/token",
+  "/v1/auth/api-key",
+]);
+
 /** Fraction of the computed delay added as random jitter. */
 const RETRY_JITTER_RATIO = 0.25;
 
@@ -344,10 +364,12 @@ export class HttpClient {
    *
    * There is one credential now: a token. A key is exchanged for one before the
    * first request, so the key itself never leaves the process it was given to.
+   * A route that establishes a session gets none (SESSION_ESTABLISHING_PATHS).
    */
-  private getAuthHeaders(_path: string, ownCredential = false): Record<string, string> {
-    if (ownCredential) {
-      // The caller is carrying its own; adding the client's would send two.
+  private getAuthHeaders(path: string, ownCredential = false): Record<string, string> {
+    if (ownCredential || SESSION_ESTABLISHING_PATHS.has(path)) {
+      // The caller is carrying its own (adding the client's would send two),
+      // or the route takes its credential in the body.
       return {};
     }
     const token = this.jwt ?? this.exchangedToken;
@@ -572,8 +594,8 @@ export class HttpClient {
   ): Promise<T> {
     // The key becomes a token before the first request, and again before the
     // token expires. It does nothing when one is already held, and nothing at
-    // all for the exchange itself.
-    if (!options.ownCredential) {
+    // all for the exchange itself or for a route that is sent no token.
+    if (!options.ownCredential && !SESSION_ESTABLISHING_PATHS.has(path)) {
       const exchanging = this.ensureToken();
       if (exchanging) {
         await exchanging;

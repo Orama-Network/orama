@@ -15,7 +15,7 @@
 
 title: Orama Whitepaper
 subtitle: Technical Reference
-version: 0.3.11
+version: 0.3.13
 
 # Tracked paths that no chapter explains: OramaOS is experimental and out of
 # scope, the website and docs are the documentation itself, plans are designs
@@ -52,12 +52,12 @@ volumes:
           - file: vol1/01-what-orama-is.md
             title: What Orama is
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns: []
           - file: vol1/02-system-shape.md
             title: System shape
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/constants/
               - core/pkg/errors/
@@ -65,7 +65,7 @@ volumes:
           - file: vol1/03-one-request-end-to-end.md
             title: One request, end to end
             template: narrative
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns: []
 
       - title: The Node
@@ -73,7 +73,7 @@ volumes:
           - file: vol1/04-the-node-as-a-supervisor.md
             title: The node as a supervisor
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/node/
               - core/pkg/nodehealth/
@@ -85,7 +85,7 @@ volumes:
           - file: vol1/05-privilege-and-filesystem-trust.md
             title: Privilege and filesystem trust
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/privhelper/
               - core/pkg/rootfs/
@@ -96,7 +96,7 @@ volumes:
           - file: vol1/06-the-wireguard-mesh.md
             title: The WireGuard mesh
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/wireguard/
               - core/pkg/overlay/
@@ -107,14 +107,14 @@ volumes:
           - file: vol1/07-cluster-state.md
             title: Cluster state
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/rqlite/
               - core/migrations/
           - file: vol1/08-membership-and-failure-detection.md
             title: Membership and failure detection
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/peerhealth/
               - core/pkg/node/membership/
@@ -124,14 +124,14 @@ volumes:
           - file: vol1/09-namespaces.md
             title: Namespaces
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/namespace/
               - core/pkg/gateway/handlers/namespace/
           - file: vol1/10-reconciliation-and-recovery.md
             title: Reconciliation and recovery
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/namespace/tenant_reconciler.go
               - core/pkg/namespace/cluster_recovery.go
@@ -145,7 +145,7 @@ volumes:
           - file: vol1/11-app-deployments.md
             title: App deployments
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/clustertrust/
               - core/pkg/deployments/
@@ -157,7 +157,7 @@ volumes:
           - file: vol1/12-gateway-architecture.md
             title: Gateway architecture
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/gateway/
               - core/pkg/gatewayspec/
@@ -166,7 +166,7 @@ volumes:
           - file: vol1/13-identity.md
             title: Identity
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/auth/
               - core/pkg/gateway/auth/
@@ -176,7 +176,7 @@ volumes:
           - file: vol1/14-authorization.md
             title: Authorization
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/gateway/auth/grants.go
               - core/pkg/gateway/auth/permission.go
@@ -188,7 +188,7 @@ volumes:
           - file: vol1/15-inter-node-trust.md
             title: Inter-node trust
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/nodeapi/
               - core/pkg/encryption/
@@ -197,7 +197,7 @@ volumes:
           - file: vol1/16-secrets-and-keys.md
             title: Secrets and keys
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/secrets/
 
@@ -206,7 +206,7 @@ volumes:
           - file: vol1/17-database.md
             title: Database
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/sqlguard/
               - core/pkg/nsbackup/
@@ -215,14 +215,14 @@ volumes:
           - file: vol1/18-cache.md
             title: Cache
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/olric/
               - core/pkg/gateway/handlers/cache/
           - file: vol1/19-storage.md
             title: Storage
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/ipfs/
               - core/pkg/gateway/handlers/storage/
@@ -230,7 +230,7 @@ volumes:
           - file: vol1/20-pubsub.md
             title: Pub/sub
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/pubsub/
               - core/pkg/gateway/handlers/pubsub/
@@ -238,7 +238,7 @@ volumes:
           - file: vol1/21-serverless.md
             title: Serverless functions
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/serverless/
               - core/pkg/gateway/handlers/serverless/
@@ -248,14 +248,14 @@ volumes:
           - file: vol1/22-push-notifications.md
             title: Push notifications
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/push/
               - core/pkg/gateway/handlers/push/
           - file: vol1/23-webrtc.md
             title: WebRTC
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/sfu/
               - core/pkg/turn/
@@ -268,14 +268,14 @@ volumes:
           - file: vol1/24-dns-and-nameservers.md
             title: DNS and nameservers
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/coredns/
               - core/pkg/nodenames/
           - file: vol1/25-tls-and-certificates.md
             title: TLS and certificates
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/tlsstore/
               - core/pkg/tlsutil/
@@ -284,14 +284,14 @@ volumes:
           - file: vol1/26-sni-routing-and-stealth-turn.md
             title: SNI routing and stealth TURN
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/sniproxy/
               - core/cmd/sni-router/
           - file: vol1/27-rate-limits-and-egress-controls.md
             title: Rate limits and egress controls
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/ratelimit/
               - core/pkg/netguard/
@@ -303,7 +303,7 @@ volumes:
           - file: vol1/28-vault.md
             title: Vault
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - vault/
               - sdk-vault/
@@ -315,7 +315,7 @@ volumes:
           - file: vol1/29-build-signing-and-release.md
             title: Build, signing and release
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/archivetrust/
               - core/pkg/releasesign/
@@ -345,7 +345,7 @@ volumes:
           - file: vol1/30-install-and-upgrade.md
             title: Install and upgrade
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/install/
               - core/pkg/statesync/
@@ -359,13 +359,13 @@ volumes:
           - file: vol1/31-rolling-upgrades.md
             title: Rolling upgrades
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/rollout/
           - file: vol1/32-observability.md
             title: Observability
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/telemetry/
               - core/pkg/inspector/
@@ -374,7 +374,7 @@ volumes:
           - file: vol1/33-recovery.md
             title: Recovery
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/cmd/orama/internal/production/recover/
               - core/cmd/orama/internal/production/raftid/
@@ -382,7 +382,7 @@ volumes:
           - file: vol1/34-testing.md
             title: Testing
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - e2e/
               - core/e2e/
@@ -392,13 +392,14 @@ volumes:
               - chain/ci.mk
               - chain/deny.toml
               - chain/.semgrep/
+              - chain/testdata/repo/
 
       - title: Client Surfaces
         chapters:
           - file: vol1/35-the-cli.md
             title: The CLI
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/cmd/orama/
               - core/pkg/rwagent/
@@ -410,7 +411,7 @@ volumes:
           - file: vol1/36-sdks.md
             title: SDKs
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - sdk/
               - core/pkg/client/
@@ -423,7 +424,7 @@ volumes:
           - file: vol2/37-global-nodes.md
             title: Global nodes
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/globalnode/
               - core/pkg/planinfo/
@@ -434,7 +435,7 @@ volumes:
           - file: vol2/38-anonymity-and-tor.md
             title: Anonymity and Tor
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - core/pkg/anonproxy/
               - core/pkg/tornet/
@@ -448,7 +449,7 @@ volumes:
           - file: vol2/39-chain-architecture.md
             title: Chain architecture
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/app/
               - chain/x/internal/
@@ -472,7 +473,7 @@ volumes:
           - file: vol2/40-economics.md
             title: Economics
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/emission/
               - chain/x/fees/
@@ -480,7 +481,7 @@ volumes:
           - file: vol2/41-storage-deals.md
             title: Storage deals
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/storage/
               - chain/provider/
@@ -494,7 +495,7 @@ volumes:
           - file: vol2/42-archive-and-indexer.md
             title: Archive and indexer
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/archive/
               - chain/archiver/
@@ -502,14 +503,14 @@ volumes:
           - file: vol2/43-the-shielded-pool.md
             title: The shielded pool
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/shielded/
               - core/pkg/shieldedaddr/
           - file: vol2/44-governance-and-contracts.md
             title: Governance and contracts
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/houses/
               - chain/x/wasmpolicy/
@@ -518,14 +519,14 @@ volumes:
           - file: vol2/45-nfts-and-the-market.md
             title: NFTs and the market
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/cnft/
               - chain/x/market/
           - file: vol2/46-relay-rewards.md
             title: Relay rewards
             template: subsystem
-            verified: "0.3.11"
+            verified: "0.3.13"
             owns:
               - chain/x/relay/
               - chain/reporter/

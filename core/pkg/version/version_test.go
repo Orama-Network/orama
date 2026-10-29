@@ -10,7 +10,7 @@ import (
 
 // repoVersionPath is the repository's VERSION file, relative to this package.
 // The module root is core/, so the file sits one level above it.
-const repoVersionPath = "../../../VERSION"
+const repoVersionPath = "../../testdata/repo/VERSION"
 
 // The embedded copy exists so every build path — go build, go install, go run,
 // an IDE — reports the real version, which a -ldflags-only scheme could not.

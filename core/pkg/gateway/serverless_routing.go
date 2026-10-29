@@ -69,7 +69,7 @@ func (g *Gateway) routeServerlessByCredential(w http.ResponseWriter, r *http.Req
 	markPhase(r, "auth")
 	switch {
 	case a.errMsg != "":
-		unauthorized(w, namespaceProxyAuthCode(a.errMsg), a.errMsg, nil)
+		g.refuseProxyCredential(w, r, a.errMsg, a.claims)
 	case a.namespace == auth.LobbyNamespace:
 		next.ServeHTTP(w, r)
 	case a.namespace != "":

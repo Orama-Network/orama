@@ -38,7 +38,8 @@ func (h *Handlers) startPendingLogin(ctx context.Context, req DeviceAuthorizatio
 //   - A device link needs the linked device's proof over this device code,
 //     and the device that approved it must still be active: revoking a stolen
 //     approver must reach the device it let in. The linked device becomes
-//     one of the account's active devices here.
+//     one of the account's active devices here, unless the namespace now
+//     admits its devices from its functions (DeviceLinkAllowed).
 func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, proof *authsvc.DeviceProof, deviceID, namespace *string) func(*authsvc.ClaimedDeviceAuthorization) error {
 	return func(claimed *authsvc.ClaimedDeviceAuthorization) error {
 		*namespace = claimed.Namespace
@@ -58,6 +59,9 @@ func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, pr
 			}
 			return nil
 		}
+		if err := h.authService.DeviceLinkAllowed(ctx, claimed.Namespace); err != nil {
+			return err
+		}
 		key, err := authsvc.ParseDeviceKey([]byte(claimed.DeviceKey))
 		if err != nil {
 			return fmt.Errorf("the pending device link holds an unreadable key: %w", err)
@@ -65,8 +69,15 @@ func (h *Handlers) claimCheck(ctx context.Context, client, deviceCode string, pr
 		if err := h.authService.VerifyDeviceProof(ctx, key, authsvc.DeviceProofClaim, claimed.Namespace, deviceCode, proof); err != nil {
 			return err
 		}
+		// The approver's state is no refusal of the device collecting: told
+		// DEVICE_REVOKED or DEVICE_PENDING here, a healthy new device would
+		// take its own key for revoked or pending. The approval is void, which
+		// is RFC 8628's access_denied.
 		if _, err := h.authService.RequireActiveDevice(ctx, claimed.Namespace, claimed.Subject, claimed.ApprovedByDevice); err != nil {
-			return fmt.Errorf("the device that approved this link can no longer approve: %w", err)
+			if authsvc.IsDeviceError(err) {
+				return authsvc.ErrDeviceAccessDenied
+			}
+			return fmt.Errorf("read the device that approved this link: %w", err)
 		}
 		device, err := h.authService.EnrolDevice(ctx, claimed.Namespace, claimed.Subject, key,
 			claimed.DeviceLabel, authsvc.DeviceStateActive, claimed.ApprovedByDevice)

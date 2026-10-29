@@ -306,7 +306,7 @@ func TestHandleAuthRefresh_aCapabilitySocketIsRefusedBeforeTheTokenIsRead(t *tes
 	server, client := serverConn(t)
 
 	fn := &serverless.Function{Name: "rpc", Namespace: "anchat"}
-	if err := h.handleAuthRefresh(oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server); err != nil {
+	if err := h.handleAuthRefresh(context.Background(), oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server); err != nil {
 		t.Fatalf("ack write: %v", err)
 	}
 	if ack := readAck(t, client); ack.OK {

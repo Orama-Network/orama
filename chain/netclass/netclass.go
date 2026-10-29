@@ -74,10 +74,12 @@ func mustPrefixes(cidrs ...string) []netip.Prefix {
 
 // IsPublic reports whether addr is a globally routable unicast address.
 func IsPublic(addr netip.Addr) bool {
-	addr = addr.Unmap()
+	// The zone is checked before unmapping: Unmap drops it, which would let a zoned
+	// IPv4-mapped address through as its public IPv4 form.
 	if !addr.IsValid() || addr.Zone() != "" {
 		return false
 	}
+	addr = addr.Unmap()
 	if addr.Is6() && !globalUnicastV6.Contains(addr) {
 		return false
 	}

@@ -46,6 +46,8 @@ type Client struct {
 	streamClient *http.Client
 	logger       *zap.Logger
 	wrapKey      []byte
+	// afterFunc is the clock of GetStored's idle watchdog.
+	afterFunc afterFunc
 }
 
 // Config holds configuration for the IPFS client
@@ -174,6 +176,7 @@ func NewClient(cfg Config, logger *zap.Logger) (*Client, error) {
 		streamClient: &http.Client{Transport: httpClient.Transport},
 		logger:       logger,
 		wrapKey:      append([]byte(nil), cfg.WrapKey...),
+		afterFunc:    wallClockAfterFunc,
 	}, nil
 }
 

@@ -13,8 +13,24 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// signScript is the release signer, os/scripts/sign.sh.
-var signScript = filepath.Join("..", "..", "..", "scripts", "sign.sh")
+// signScript is the release signer, os/scripts/sign.sh. It lives above this
+// module; testdata/repo links it in, so the go test cache sees it as an input.
+var signScript = filepath.Join("..", "..", "testdata", "repo", "os", "scripts", "sign.sh")
+
+// runSignScript runs sign.sh with args. The test reads the script and hands
+// it to bash on stdin: a file only bash opened would not be an input the go
+// test cache knows of.
+func runSignScript(t *testing.T, args ...string) ([]byte, error) {
+	t.Helper()
+	script, err := os.Open(signScript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer script.Close()
+	cmd := exec.Command("bash", append([]string{"-s", "--"}, args...)...)
+	cmd.Stdin = script
+	return cmd.CombinedOutput()
+}
 
 // evmPersonalSign signs message as `rw sign --chain evm` does: EIP-191
 // personal_sign, r || s || v with v = 27 + recovery id.
@@ -35,7 +51,7 @@ func TestSignScript_signsWhatTheAgentVerifies(t *testing.T) {
 	if err := os.WriteFile(payload, []byte("squashfs payload bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("bash", signScript, "--message", prefix).CombinedOutput()
+	out, err := runSignScript(t, "--message", prefix)
 	if err != nil {
 		t.Fatalf("sign.sh --message: %v\n%s", err, out)
 	}
@@ -65,7 +81,7 @@ func TestSignScript_signsWhatTheAgentVerifies(t *testing.T) {
 
 func TestSignScript_refusesAMissingPayload(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "orama-os-1.2.3-amd64")
-	if out, err := exec.Command("bash", signScript, "--message", prefix).CombinedOutput(); err == nil {
+	if out, err := runSignScript(t, "--message", prefix); err == nil {
 		t.Fatalf("sign.sh produced a message with no payload: %s", out)
 	}
 }

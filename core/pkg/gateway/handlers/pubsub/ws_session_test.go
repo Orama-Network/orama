@@ -23,6 +23,7 @@ func (denyAll) Revoked(*gwauth.JWTClaims) (bool, error) { return true, nil }
 func (denyAll) RefreshRevocations(context.Context)      {}
 func (denyAll) RevocationsUsable() bool                 { return true }
 func (denyAll) RevokedKey(int64) (bool, error)          { return true, nil }
+func (denyAll) DeviceRevoked(*gwauth.JWTClaims) bool    { return false }
 
 // subscribe opens a real subscriber socket authorized by claims, and returns it
 // with the registry it was registered in.
@@ -149,3 +150,4 @@ func (revokedNothing) Revoked(*gwauth.JWTClaims) (bool, error) { return false, n
 func (revokedNothing) RefreshRevocations(context.Context)      {}
 func (revokedNothing) RevocationsUsable() bool                 { return true }
 func (revokedNothing) RevokedKey(int64) (bool, error)          { return false, nil }
+func (revokedNothing) DeviceRevoked(*gwauth.JWTClaims) bool    { return false }

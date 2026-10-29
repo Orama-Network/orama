@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -195,6 +196,25 @@ func TestSupervisor_healthRegressionReconcilesAgainAndBlocksDependents(t *testin
 	})
 	s.Add(Component{Name: "child", DependsOn: []string{"svc"}, Reconcile: child.reconcile})
 
+	// The dependent must go back to blocked, not merely be reconciled again:
+	// a component whose dependency is unhealthy has no business running.
+	// Blocked lasts only until the next pass reconciles svc, so a poll of
+	// Snapshot can miss it; every status change is published, so the test
+	// watches those instead.
+	var regressed atomic.Bool
+	childBlocked := make(chan struct{})
+	var markBlocked sync.Once
+	s.OnChange(func(snap Snapshot) {
+		if !regressed.Load() {
+			return
+		}
+		for _, c := range snap.Components {
+			if c.Name == "child" && c.Status == StatusBlocked {
+				markBlocked.Do(func() { close(childBlocked) })
+			}
+		}
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -204,20 +224,15 @@ func TestSupervisor_healthRegressionReconcilesAgainAndBlocksDependents(t *testin
 
 	reconcilesBefore := svc.count()
 	childBefore := child.count()
+	regressed.Store(true)
 	healthy.Store("ok", false)
 
 	waitFor(t, "health regression to reconcile svc again", func() bool { return svc.count() > reconcilesBefore })
-
-	// The dependent must go back to blocked, not merely be reconciled again:
-	// a component whose dependency is unhealthy has no business running.
-	waitFor(t, "child to be marked blocked", func() bool {
-		for _, c := range s.Snapshot().Components {
-			if c.Name == "child" {
-				return c.Status == StatusBlocked
-			}
-		}
-		return false
-	})
+	select {
+	case <-childBlocked:
+	case <-time.After(waitForTimeout):
+		t.Fatal("child was never marked blocked while svc was unhealthy")
+	}
 	healthy.Store("ok", true)
 	waitFor(t, "child to be reconciled again once svc recovers", func() bool {
 		return child.count() > childBefore
@@ -363,9 +378,12 @@ func TestOptions_withDefaults(t *testing.T) {
 	}
 }
 
+// waitForTimeout bounds every wait for the supervisor to reach a state.
+const waitForTimeout = 5 * time.Second
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(waitForTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return

@@ -11,7 +11,7 @@ import (
 
 // messageKindsFile is the indexer's table of message kinds (chain/indexer/kinds.go embeds it), the
 // one source of the filters a transaction list takes besides "all" and "failed".
-var messageKindsFile = filepath.Join("..", "..", "..", "..", "..", "chain", "indexer", "message_kinds.json")
+var messageKindsFile = filepath.Join("..", "..", "..", "..", "testdata", "repo", "chain", "indexer", "message_kinds.json")
 
 // The gateway refuses a filter the indexer would not answer and passes every one it would: its
 // list must be the indexer's.

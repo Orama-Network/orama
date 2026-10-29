@@ -19,7 +19,7 @@ import (
 
 // What the namespace's functions do to its rooms: admit a user or one device of
 // theirs, kick a user or one device, mute a user's audio or their video, and
-// read the admission a device holds (the webrtc_admit, webrtc_kick,
+// read the admission a device holds (the webrtc_admit, webrtc_admit_with_mutes, webrtc_kick,
 // webrtc_kick_device, webrtc_mute, webrtc_mute_video and webrtc_admission host
 // functions). Admissions, revocations and mutes are recorded in the namespace's
 // database, which is what the next join is judged by; kicks and mutes also go to
@@ -43,16 +43,58 @@ const (
 // Admit records that user may join room for ttl, from device (any device when
 // "") and returns when the admission ends.
 func (h *WebRTCHandlers) Admit(ctx context.Context, ns, room, user, device string, ttl time.Duration) (time.Time, error) {
-	if err := h.checkControl(ns, room, user); err != nil {
+	if err := h.checkAdmit(ns, room, user, device, ttl); err != nil {
 		return time.Time{}, err
 	}
+	return h.admissions.Admit(ctx, ns, room, user, device, ttl)
+}
+
+// AdmitWithMutes is Admit stating the user's audio and video mutes in room
+// (feat-972). They are recorded with the admission, so the ticket of every join
+// it lets in carries them and the SFU applies them before the peer can publish:
+// a user admitted muted is muted from their first packet, with no mute call
+// after the admission. An SFU that may hold another state for the user (a
+// connection or ticket of theirs issued on an earlier admission) is told
+// first, as a mute tells it, and the admission is recorded after: a ticket
+// issued in between carries the older state and the SFU corrects it from its
+// mute log. When an SFU cannot be told, nothing is recorded and the call
+// fails. The SFUs are not called when no SFU can hold another state, which is
+// the case for a user's first admission to a room in a namespace that
+// requires admission.
+func (h *WebRTCHandlers) AdmitWithMutes(ctx context.Context, ns, room, user, device string, ttl time.Duration,
+	mutes serverless.WebRTCMutes) (time.Time, error) {
+	if err := h.checkAdmit(ns, room, user, device, ttl); err != nil {
+		return time.Time{}, err
+	}
+	stale, err := h.admissions.StaleMutes(ctx, ns, room, user, mutes)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, m := range stale {
+		muted := mutes.Muted
+		if m == MediaVideo {
+			muted = mutes.VideoMuted
+		}
+		req := ctrlauth.MuteRequest{Room: room, UserID: user, Muted: muted, AtMs: h.now().UnixMilli()}
+		if err := h.callAll(ctx, ns, mutePath(m), req); err != nil {
+			return time.Time{}, fmt.Errorf("the admission of %q to room %q is not recorded: the SFU could not be told its %s mute: %w", user, room, m, err)
+		}
+	}
+	return h.admissions.AdmitWithMutes(ctx, ns, room, user, device, ttl, mutes)
+}
+
+// checkAdmit bounds an admission a function issues.
+func (h *WebRTCHandlers) checkAdmit(ns, room, user, device string, ttl time.Duration) error {
+	if err := h.checkControl(ns, room, user); err != nil {
+		return err
+	}
 	if len(device) > maxIdentityLen {
-		return time.Time{}, fmt.Errorf("device id is %d bytes, the limit is %d", len(device), maxIdentityLen)
+		return fmt.Errorf("device id is %d bytes, the limit is %d", len(device), maxIdentityLen)
 	}
 	if ttl <= 0 || ttl > MaxAdmissionTTL {
-		return time.Time{}, fmt.Errorf("admission ttl must be between 1 second and %s, got %s", MaxAdmissionTTL, ttl)
+		return fmt.Errorf("admission ttl must be between 1 second and %s, got %s", MaxAdmissionTTL, ttl)
 	}
-	return h.admissions.Admit(ctx, ns, room, user, device, ttl)
+	return nil
 }
 
 // Kick revokes user's admissions to room and removes their connection from the
@@ -115,15 +157,19 @@ func (h *WebRTCHandlers) mute(ctx context.Context, ns, room, user string, m Medi
 	if err := h.admissions.SetMuted(ctx, ns, room, user, m, muted); err != nil {
 		return err
 	}
-	path := ctrlauth.MutePath
-	if m == MediaVideo {
-		path = ctrlauth.VideoMutePath
-	}
 	req := ctrlauth.MuteRequest{Room: room, UserID: user, Muted: muted, AtMs: h.now().UnixMilli()}
-	if err := h.callAll(ctx, ns, path, req); err != nil {
+	if err := h.callAll(ctx, ns, mutePath(m), req); err != nil {
 		return fmt.Errorf("the %s mute of %q in room %q is recorded, but the SFU could not be told: %w", m, user, room, err)
 	}
 	return nil
+}
+
+// mutePath is the SFU control route that mutes m.
+func mutePath(m Media) string {
+	if m == MediaVideo {
+		return ctrlauth.VideoMutePath
+	}
+	return ctrlauth.MutePath
 }
 
 // AdmissionOf reads what the namespace has on record for device ("": a session

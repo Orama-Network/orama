@@ -249,6 +249,8 @@ func unquoteEnvValue(raw string) string {
 // app the same environment the unit would, or an app behaves differently
 // depending on which runner started it.
 func TestStartDirect_givesTheAppTheSameEnvironmentTheUnitWould(t *testing.T) {
+	// The direct runner logs under $HOME; a test's run belongs in its own.
+	t.Setenv("HOME", t.TempDir())
 	m, _ := testManager(t)
 	workDir := t.TempDir()
 	dumped := filepath.Join(workDir, "env.txt")
@@ -264,18 +266,20 @@ func TestStartDirect_givesTheAppTheSameEnvironmentTheUnitWould(t *testing.T) {
 		t.Fatalf("startDirect: %v", err)
 	}
 
+	// The runner forgets a process once it has exited, so the environment is
+	// read whole, not while the shell is still writing it, and the runner's
+	// goroutine waiting on the process is done before the test ends.
+	serviceName := m.getServiceName(d)
 	deadline := time.Now().Add(5 * time.Second)
-	var contents []byte
-	for time.Now().Before(deadline) {
-		var err error
-		contents, err = os.ReadFile(dumped)
-		if err == nil && len(contents) > 0 {
-			break
+	for running(m, serviceName) {
+		if time.Now().After(deadline) {
+			t.Fatal("the spawned process did not exit")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(contents) == 0 {
-		t.Fatal("the spawned process never wrote its environment")
+	contents, err := os.ReadFile(dumped)
+	if err != nil || len(contents) == 0 {
+		t.Fatalf("the spawned process never wrote its environment: %v", err)
 	}
 
 	env := string(contents)
@@ -291,4 +295,13 @@ func TestStartDirect_givesTheAppTheSameEnvironmentTheUnitWould(t *testing.T) {
 			t.Errorf("the process did not get %s\nenvironment:\n%s", want, env)
 		}
 	}
+}
+
+// running reports whether the direct runner still tracks serviceName's
+// process: it stops once the process has exited and been waited for.
+func running(m *Manager, serviceName string) bool {
+	m.processesMu.RLock()
+	defer m.processesMu.RUnlock()
+	_, ok := m.processes[serviceName]
+	return ok
 }

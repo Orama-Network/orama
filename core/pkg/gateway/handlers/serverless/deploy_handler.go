@@ -148,6 +148,13 @@ func (h *ServerlessHandlers) DeployFunction(w http.ResponseWriter, r *http.Reque
 			writeStoreError(w, "Failed to deploy function", err)
 			return
 		}
+		// A definition the registry refuses (ws_auth, invocable_by) is the
+		// deployer's to fix, named by its field: a 400, not a deploy failure.
+		var invalid *serverless.ValidationError
+		if errors.As(err, &invalid) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		// Use the typed function-deploy code so clients can distinguish
 		// "registry rejected this binary" from generic 500s.
 		writeRPCError(w, http.StatusInternalServerError,

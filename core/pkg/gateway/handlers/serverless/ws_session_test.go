@@ -24,6 +24,7 @@ func (denyAll) Revoked(*auth.JWTClaims) (bool, error) { return true, nil }
 func (denyAll) RefreshRevocations(context.Context)    {}
 func (denyAll) RevocationsUsable() bool               { return true }
 func (denyAll) RevokedKey(int64) (bool, error)        { return true, nil }
+func (denyAll) DeviceRevoked(*auth.JWTClaims) bool    { return false }
 
 func wsURL(srv *httptest.Server, path string) string {
 	return "ws" + strings.TrimPrefix(srv.URL, "http") + path
@@ -146,7 +147,7 @@ func TestHandleAuthRefresh_refusesATokenForAnotherSubject(t *testing.T) {
 
 	// No instance is passed: a refused refresh must not reach it.
 	fn := &serverless.Function{Name: "rpc", Namespace: "anchat"}
-	err := h.handleAuthRefresh(oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server)
+	err := h.handleAuthRefresh(context.Background(), oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server)
 	if err != nil {
 		t.Fatalf("ack write: %v", err)
 	}
@@ -174,7 +175,7 @@ func TestHandleAuthRefresh_refusesATokenOnAKeylessSocket(t *testing.T) {
 	server, client := serverConn(t)
 
 	fn := &serverless.Function{Name: "rpc", Namespace: "anchat"}
-	if err := h.handleAuthRefresh(oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, nil, "anchat", "c1", server); err != nil {
+	if err := h.handleAuthRefresh(context.Background(), oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, nil, "anchat", "c1", server); err != nil {
 		t.Fatalf("ack write: %v", err)
 	}
 	if ack := readAck(t, client); ack.OK {
@@ -196,7 +197,7 @@ func TestHandleAuthRefresh_anUnreadableRevocationListAcksARetryableConstant(t *t
 	server, client := serverConn(t)
 
 	fn := &serverless.Function{Name: "rpc", Namespace: "anchat"}
-	if err := h.handleAuthRefresh(oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server); err != nil {
+	if err := h.handleAuthRefresh(context.Background(), oramaControlFrame{Type: "auth.refresh", JWT: "x.y.z"}, fn, nil, sock, "anchat", "c1", server); err != nil {
 		t.Fatalf("ack write: %v", err)
 	}
 	ack := readAck(t, client)

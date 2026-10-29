@@ -19,7 +19,9 @@ import (
 // GET /v1/auth/whoami
 // Response: { "authenticated", "method", "principal", "subject", "namespace",
 //
-//	"role", "grants", "expires_at" }
+//	"role", "grants", "expires_at" }, and for a device-bound session
+//	"device_id" and "device_state" ("active", or "pending": the restricted
+//	session of a device the namespace has yet to approve, which holds no grant)
 func (h *Handlers) WhoamiHandler(w http.ResponseWriter, r *http.Request) {
 	if h.authService == nil {
 		writeError(w, http.StatusServiceUnavailable, "auth service not initialized")
@@ -54,6 +56,18 @@ func (h *Handlers) WhoamiHandler(w http.ResponseWriter, r *http.Request) {
 		body["issued_at"] = claims.Iat
 		body["not_before"] = claims.Nbf
 		body["expires_at"] = claims.Exp
+		if claims.Did != "" {
+			body["device_id"] = claims.Did
+			body["device_state"] = claims.DeviceState()
+		}
+		if claims.PendingDevice() {
+			// The account's grant is not this session's: a pending device
+			// reaches its own session and the functions open to pending
+			// devices, and nothing a grant describes.
+			body["grants"] = []string{}
+			writeJSON(w, http.StatusOK, body)
+			return
+		}
 	case key != "":
 		body["authenticated"] = true
 		body["method"] = "api_key"

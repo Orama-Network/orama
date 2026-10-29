@@ -69,6 +69,13 @@ const (
 	// replication factor and counted against its references; an unpinned one
 	// could not be downloaded and would be reclaimed (bugboard #432).
 	ErrCodeUnpinnedUploadRefused RPCErrorCode = "UNPINNED_UPLOAD_REFUSED"
+	// ErrCodeDevicePendingApproval — the caller's device is pending approval
+	// under the function device policy (feat-973), and the function it asked
+	// for is not open to pending devices (function.yaml
+	// open_to_pending_devices). The same code the gateway refuses such a
+	// session every other route with. Non-retryable until the namespace
+	// approves the device and the session refreshes.
+	ErrCodeDevicePendingApproval RPCErrorCode = "DEVICE_PENDING_APPROVAL"
 
 	// 5xx — server error
 	ErrCodeInternal           RPCErrorCode = "INTERNAL"
@@ -99,6 +106,11 @@ const (
 	// function that a later deploy or a rollback replaced (404). Only the
 	// current version runs; a rollback makes an earlier one current again.
 	ErrCodeFunctionVersionSuperseded RPCErrorCode = "FUNCTION_VERSION_SUPERSEDED"
+	// ErrCodeFunctionNotDirectlyInvocable is a client naming a function that
+	// declares `invocable_by` (403): it runs only when one of the functions it
+	// names calls it with function_invoke or function_invoke_async. No
+	// credential a client can hold changes that; call the parent instead.
+	ErrCodeFunctionNotDirectlyInvocable RPCErrorCode = "FUNCTION_NOT_DIRECTLY_INVOCABLE"
 )
 
 // RPCErrorEnvelope is the canonical wire shape. Use WriteRPCError to emit;
@@ -223,10 +235,14 @@ func defaultMessageFor(code RPCErrorCode) string {
 		return "function ran past its timeout; its effects may have happened"
 	case ErrCodeFunctionVersionSuperseded:
 		return "function version superseded; only the current version can be invoked"
+	case ErrCodeFunctionNotDirectlyInvocable:
+		return "function is not directly invocable; it runs only when a function it names calls it"
 	case ErrCodeFunctionDeploy:
 		return "function deployment failed"
 	case ErrCodeSchemaMismatch:
 		return "gateway schema does not match required version"
+	case ErrCodeDevicePendingApproval:
+		return "this device is waiting to be approved"
 	default:
 		return "an error occurred"
 	}

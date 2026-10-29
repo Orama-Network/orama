@@ -52,7 +52,11 @@ import (
 // which key made a request. v7 adds what the token's device attestation proved
 // (its `att` claim), without which a namespace gateway could not judge the
 // request against its namespace's attestation policy, nor tell a function who
-// called (get_caller_attestation).
+// called (get_caller_attestation). v8 adds the subject of a pending device's
+// restricted session (feat-973), which travels in a field of its own instead
+// of the v1 subject: a namespace gateway that predates pending devices reads
+// such a hop as one with no caller, and runs for it only what it would run for
+// anybody, never what the account may.
 //
 // A signer stamps every version, so a namespace gateway that predates the
 // newest still accepts what an upgraded main gateway sends it. A verifier
@@ -72,14 +76,15 @@ const (
 	// "<unix seconds>.<hex hmac>".
 	HeaderInternalAuthMAC = "X-Internal-Auth-MAC"
 
-	// HeaderInternalAuthMACv2 to HeaderInternalAuthMACv7 authenticate the v2
-	// to v7 fields, in the same format.
+	// HeaderInternalAuthMACv2 to HeaderInternalAuthMACv8 authenticate the v2
+	// to v8 fields, in the same format.
 	HeaderInternalAuthMACv2 = "X-Internal-Auth-MAC-V2"
 	HeaderInternalAuthMACv3 = "X-Internal-Auth-MAC-V3"
 	HeaderInternalAuthMACv4 = "X-Internal-Auth-MAC-V4"
 	HeaderInternalAuthMACv5 = "X-Internal-Auth-MAC-V5"
 	HeaderInternalAuthMACv6 = "X-Internal-Auth-MAC-V6"
 	HeaderInternalAuthMACv7 = "X-Internal-Auth-MAC-V7"
+	HeaderInternalAuthMACv8 = "X-Internal-Auth-MAC-V8"
 
 	// HeaderInternalAuthJWTExp and HeaderInternalAuthJWTIat carry the verified
 	// token's exp and iat (unix seconds), HeaderInternalAuthJWTJti its jti.
@@ -112,6 +117,12 @@ const (
 	// (auth.AttestationClaim) as base64(JSON). Covered by the v7 MAC only.
 	HeaderInternalAuthJWTAtt = "X-Internal-Auth-JWT-Att"
 
+	// HeaderInternalAuthJWTPendingSub carries the subject of a verified token
+	// that is a pending device's restricted session, in place of
+	// HeaderInternalAuthJWTSub, which such a hop leaves empty. Covered by the
+	// v8 MAC only.
+	HeaderInternalAuthJWTPendingSub = "X-Internal-Auth-JWT-Pending-Sub"
+
 	// internalAuthKeyPurpose is the HKDF domain separator for the hop key, so
 	// it is unrelated to the TURN, push and secrets keys derived from the same
 	// cluster secret.
@@ -131,6 +142,7 @@ const (
 	internalAuthPayloadV5 = "orama-internal-auth-v5"
 	internalAuthPayloadV6 = "orama-internal-auth-v6"
 	internalAuthPayloadV7 = "orama-internal-auth-v7"
+	internalAuthPayloadV8 = "orama-internal-auth-v8"
 )
 
 // hopVersion is one version of the hop MAC: its payload prefix, the header it
@@ -157,6 +169,8 @@ var hopVersions = []hopVersion{
 		[]string{HeaderInternalAuthKeyID}},
 	{internalAuthPayloadV7, HeaderInternalAuthMACv7,
 		[]string{HeaderInternalAuthJWTAtt}},
+	{internalAuthPayloadV8, HeaderInternalAuthMACv8,
+		[]string{HeaderInternalAuthJWTPendingSub}},
 }
 
 // internalAuthVersionedHeaders are the fields only a MAC newer than v1 covers.

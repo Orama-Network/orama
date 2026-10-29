@@ -64,7 +64,7 @@ func (c *Client) GetStored(ctx context.Context, cid, ipfsAPIURL string, idle tim
 	if ipfsAPIURL == "" {
 		ipfsAPIURL = c.ipfsAPIURL
 	}
-	ctx, dog := newIdleWatchdog(ctx, idle)
+	ctx, dog := newIdleWatchdog(ctx, idle, c.afterFunc)
 	content, err := c.openStored(ctx, cid, ipfsAPIURL, dog)
 	if err != nil {
 		dog.stop()
@@ -185,21 +185,34 @@ func (p *progressReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
+// watchdogTimer is the part of *time.Timer the idle watchdog uses.
+type watchdogTimer interface {
+	Reset(d time.Duration) bool
+	Stop() bool
+}
+
+// afterFunc starts a watchdogTimer that calls f once d has passed. The
+// Client's is time.AfterFunc; a test gives its own clock, so what it checks
+// does not depend on how fast the machine runs it.
+type afterFunc func(d time.Duration, f func()) watchdogTimer
+
+func wallClockAfterFunc(d time.Duration, f func()) watchdogTimer { return time.AfterFunc(d, f) }
+
 // idleWatchdog cancels a context when no progress was reported for its idle
 // timeout. A zero timeout makes it a no-op that never fires.
 type idleWatchdog struct {
 	idle   time.Duration
 	cancel context.CancelFunc
 	mu     sync.Mutex
-	timer  *time.Timer
+	timer  watchdogTimer
 	fired  bool
 }
 
-func newIdleWatchdog(parent context.Context, idle time.Duration) (context.Context, *idleWatchdog) {
+func newIdleWatchdog(parent context.Context, idle time.Duration, after afterFunc) (context.Context, *idleWatchdog) {
 	ctx, cancel := context.WithCancel(parent)
 	d := &idleWatchdog{idle: idle, cancel: cancel}
 	if idle > 0 {
-		d.timer = time.AfterFunc(idle, d.fire)
+		d.timer = after(idle, d.fire)
 	}
 	return ctx, d
 }

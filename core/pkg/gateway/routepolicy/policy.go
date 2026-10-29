@@ -131,11 +131,46 @@ type Policy struct {
 	// only in that registry, so a namespace gateway cannot answer for them.
 	MainGateway bool
 
+	// PendingDevice is what the route does for a pending device's restricted
+	// session (the function device policy). The zero value refuses it, so a
+	// route nobody decided about is closed to pending devices — whether or not
+	// it is Open to everyone else: a pending session reaches what the namespace
+	// opened to it and nothing more.
+	PendingDevice PendingDeviceAccess
+
 	// RequestLog is how much of a request the gateway records about itself. The
 	// zero value is everything; the routes of a relayed fetch (bugboard #266)
 	// declare less, since their whole point is that no node keeps a record
 	// pairing an address, a size or a duration with a CID or a destination.
 	RequestLog RequestLogLevel
+}
+
+// PendingDeviceAccess is what a route does for a pending device's session.
+type PendingDeviceAccess int
+
+const (
+	// PendingRefused refuses a pending device's session with
+	// DEVICE_PENDING_APPROVAL. It is the zero value.
+	PendingRefused PendingDeviceAccess = iota
+	// PendingOwnSession admits it to a route that acts on that session or its
+	// device alone: refreshing or ending it, reading who it is, attesting the
+	// device. The handler must not act on anything else for it.
+	PendingOwnSession
+	// PendingFunctionInvoke admits it to a function's invoke or WebSocket
+	// route, where the invoker runs only a function deployed open to pending
+	// devices for it.
+	PendingFunctionInvoke
+)
+
+func (a PendingDeviceAccess) String() string {
+	switch a {
+	case PendingOwnSession:
+		return "own-session"
+	case PendingFunctionInvoke:
+		return "function-invoke"
+	default:
+		return "refused"
+	}
 }
 
 // RequestLogLevel is what a route leaves in the request log and the access log.

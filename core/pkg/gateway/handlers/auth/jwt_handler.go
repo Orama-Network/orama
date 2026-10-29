@@ -219,14 +219,20 @@ func (h *Handlers) RefreshHandler(w http.ResponseWriter, r *http.Request) {
 		Result:    authsvc.AuditSuccess,
 	})
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"access_token":  token,
 		"token_type":    "Bearer",
 		"expires_in":    int(expUnix - time.Now().Unix()),
 		"refresh_token": newRefreshToken,
 		"subject":       subject,
 		"namespace":     req.Namespace,
-	})
+	}
+	// A device-bound session says what its device is now: a pending device's
+	// refresh after a function approved it is the first full session.
+	if state := authsvc.MintedDeviceState(token); state != "" {
+		body["device_state"] = state
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // LogoutHandler revokes refresh tokens.
@@ -274,11 +280,22 @@ func (h *Handlers) LogoutHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "jwt required for all=true")
 			return
 		}
+		// A pending device ends its own session and no other.
+		if claims.PendingDevice() {
+			writeDeviceRefusal(w, authsvc.ErrDevicePendingApproval)
+			return
+		}
 		// From a session bound to a device, ending every session of the
 		// account is the device's act, as revoking a device or ending a
 		// session is: the access token alone is a bearer token anybody who
-		// copied it holds. A session bound to no device is the wallet's own.
-		if claims.Did != "" && !h.verifyCallerDeviceProof(w, r, h.servedNamespace(r), claims,
+		// copied it holds. A session bound to no device is the wallet's own
+		// under the optional policy only; under any other it was minted before
+		// the policy was set, and is held to the rule sessionOwner applies.
+		if claims.Did == "" {
+			if !h.requireNoDevicePolicy(w, r, h.servedNamespace(r), claims.Sub) {
+				return
+			}
+		} else if !h.verifyCallerDeviceProof(w, r, h.servedNamespace(r), claims,
 			authsvc.DeviceProofLogoutAll, claims.Did, req.DeviceProof) {
 			return
 		}

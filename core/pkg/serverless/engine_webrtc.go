@@ -20,6 +20,26 @@ const maxAdmissionTTLSeconds = int64(365 * 24 * 60 * 60)
 // reason the gateway log records.
 func (e *Engine) hWebRTCAdmit(ctx context.Context, mod api.Module,
 	roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64) uint64 {
+	return e.webrtcAdmit(ctx, mod, "webrtc_admit", e.hostServices.WebRTCAdmit, roomPtr, roomLen, userPtr, userLen, devPtr, devLen, ttlSeconds)
+}
+
+// hWebRTCAdmitWithMutes is hWebRTCAdmit stating the user's audio (muted != 0)
+// and video (videoMuted != 0) mutes, recorded with the admission. Returns the
+// packed ptr<<32|len of the JSON {"room","user_id","device_id","expires_at",
+// "muted","video_muted"}, or 0 on failure, whose reason the gateway log
+// records.
+func (e *Engine) hWebRTCAdmitWithMutes(ctx context.Context, mod api.Module,
+	roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64, muted, videoMuted uint32) uint64 {
+	mutes := WebRTCMutes{Muted: muted != 0, VideoMuted: videoMuted != 0}
+	admit := func(ctx context.Context, room, user, device string, ttl time.Duration) (string, error) {
+		return e.hostServices.WebRTCAdmitWithMutes(ctx, room, user, device, ttl, mutes)
+	}
+	return e.webrtcAdmit(ctx, mod, "webrtc_admit_with_mutes", admit, roomPtr, roomLen, userPtr, userLen, devPtr, devLen, ttlSeconds)
+}
+
+func (e *Engine) webrtcAdmit(ctx context.Context, mod api.Module, name string,
+	admit func(context.Context, string, string, string, time.Duration) (string, error),
+	roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64) uint64 {
 	room, ok1 := e.executor.ReadFromGuest(mod, roomPtr, roomLen)
 	user, ok2 := e.executor.ReadFromGuest(mod, userPtr, userLen)
 	device, ok3 := e.executor.ReadFromGuest(mod, devPtr, devLen)
@@ -27,12 +47,12 @@ func (e *Engine) hWebRTCAdmit(ctx context.Context, mod api.Module,
 		return 0
 	}
 	if ttlSeconds <= 0 || ttlSeconds > maxAdmissionTTLSeconds {
-		HostLogger(ctx, e.logger).Warn("host function webrtc_admit refused: ttl out of range", zap.Int64("ttl_seconds", ttlSeconds))
+		HostLogger(ctx, e.logger).Warn("host function "+name+" refused: ttl out of range", zap.Int64("ttl_seconds", ttlSeconds))
 		return 0
 	}
-	admitted, err := e.hostServices.WebRTCAdmit(ctx, string(room), string(user), string(device), time.Duration(ttlSeconds)*time.Second)
+	admitted, err := admit(ctx, string(room), string(user), string(device), time.Duration(ttlSeconds)*time.Second)
 	if err != nil {
-		HostLogger(ctx, e.logger).Warn("host function webrtc_admit refused", zap.Error(err))
+		HostLogger(ctx, e.logger).Warn("host function "+name+" refused", zap.Error(err))
 		return 0
 	}
 	return e.executor.WriteToGuest(ctx, mod, []byte(admitted))

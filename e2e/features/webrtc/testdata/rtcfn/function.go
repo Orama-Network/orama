@@ -1,6 +1,6 @@
 // Command function is the WebRTC fixture the webrtc feature deploys with
 // `orama function deploy`: TinyGo, WASI, stateless. It admits a user (or one
-// device of theirs) to a room, kicks a user or one device, mutes a user's audio
+// device of theirs) to a room, with or without stating their mutes, kicks a user or one device, mutes a user's audio
 // or video, reads a device's admission through the webrtc_* host calls, and
 // reports the caller's device id as an application records it when its device
 // registers.
@@ -15,6 +15,9 @@ import (
 
 //go:wasmimport env webrtc_admit
 func webrtcAdmit(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64) uint64
+
+//go:wasmimport env webrtc_admit_with_mutes
+func webrtcAdmitWithMutes(roomPtr, roomLen, userPtr, userLen, devPtr, devLen uint32, ttlSeconds int64, muted, videoMuted uint32) uint64
 
 //go:wasmimport env webrtc_kick
 func webrtcKick(roomPtr, roomLen, userPtr, userLen uint32) uint32
@@ -41,6 +44,8 @@ type request struct {
 	Device string `json:"device"`
 	TTL    int64  `json:"ttl"`
 	Muted  bool   `json:"muted"`
+	// VideoMuted is the video mute admit_with_mutes states.
+	VideoMuted bool `json:"video_muted"`
 }
 
 func main() {
@@ -60,6 +65,14 @@ func main() {
 		admitted := unpack(webrtcAdmit(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), ptr(device), uint32(len(device)), req.TTL))
 		if admitted == "" {
 			reply(map[string]any{"error": "admit refused"})
+			return
+		}
+		os.Stdout.Write([]byte(admitted))
+	case "admit_with_mutes":
+		admitted := unpack(webrtcAdmitWithMutes(ptr(room), uint32(len(room)), ptr(user), uint32(len(user)), ptr(device), uint32(len(device)), req.TTL,
+			flag(req.Muted), flag(req.VideoMuted)))
+		if admitted == "" {
+			reply(map[string]any{"error": "admit with mutes refused"})
 			return
 		}
 		os.Stdout.Write([]byte(admitted))

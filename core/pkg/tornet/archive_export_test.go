@@ -142,7 +142,7 @@ func TestExportOwnVote_noVotesOfThePeriod(t *testing.T) {
 // The reporter (chain module, which core cannot import) reads the files named
 // with this suffix in its votes directory; a change on either side must fail here.
 func TestVoteExportSuffixIsTheReportersVoteSuffix(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("..", "..", "..", "chain", "reporter", "load.go"))
+	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "repo", "chain", "reporter", "load.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

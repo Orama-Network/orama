@@ -33,10 +33,15 @@ const (
 	// around the gateway's clock. The answer's server_time is the gateway's
 	// time, in unix seconds.
 	ErrCodeDeviceProofClockSkew = "DEVICE_PROOF_CLOCK_SKEW"
-	// ErrCodeDeviceRevoked: the device was revoked. Its key is done.
+	// ErrCodeDeviceRevoked: the device presenting itself was revoked. Its key
+	// is done. The answer's revocation is who revoked it and what proves it.
 	ErrCodeDeviceRevoked = "DEVICE_REVOKED"
 	// ErrCodeDevicePending: the device waits for another device's approval.
 	ErrCodeDevicePending = "DEVICE_PENDING"
+	// ErrCodeDevicePendingApproval: the caller's session is a pending device's
+	// restricted one (the function policy), which reaches only its own session
+	// and the functions open to pending devices.
+	ErrCodeDevicePendingApproval = "DEVICE_PENDING_APPROVAL"
 	// ErrCodeDeviceNotFound: the account has no such device.
 	ErrCodeDeviceNotFound = "DEVICE_NOT_FOUND"
 	// ErrCodeDeviceKeyTaken: the key is enrolled for another account.
@@ -53,6 +58,9 @@ const (
 	// ErrCodeDeviceLoginMismatch: the pending login is for another namespace
 	// or account, or is the other kind of login (device link vs wallet).
 	ErrCodeDeviceLoginMismatch = "DEVICE_LOGIN_MISMATCH"
+	// ErrCodeDeviceLinkFunctionPolicy: a device link in a namespace whose
+	// functions admit its users' devices (the function policy).
+	ErrCodeDeviceLinkFunctionPolicy = "DEVICE_LINK_FUNCTION_POLICY"
 )
 
 type deviceRefusal struct {
@@ -80,12 +88,16 @@ var deviceRefusals = []struct {
 		"this device's clock is off: stamp the proof's iat on the gateway's clock (server_time here, or any answer's Date header) and sign a new proof"}},
 	{authsvc.ErrDeviceRevoked, deviceRefusal{http.StatusForbidden, ErrCodeDeviceRevoked,
 		"this device key can never sign in again; generate a new key and link it from a device that is still signed in"}},
+	{authsvc.ErrDevicePendingApproval, deviceRefusal{http.StatusForbidden, ErrCodeDevicePendingApproval,
+		"finish the application's own admission of this device (its functions open to pending devices), then refresh the session"}},
 	{authsvc.ErrDevicePending, deviceRefusal{http.StatusForbidden, ErrCodeDevicePending,
-		"approve this device from one of the account's signed-in devices"}},
+		"approve this device: from one of the account's signed-in devices, or, under the function policy, through the application"}},
 	{authsvc.ErrDeviceNotFound, deviceRefusal{http.StatusNotFound, ErrCodeDeviceNotFound,
 		"list this account's devices with GET /v1/auth/devices"}},
 	{authsvc.ErrSignInClosed, deviceRefusal{http.StatusForbidden, ErrCodeSignInClosed,
 		"this wallet holds no grant here (never invited, or its grant was revoked, expired or disabled) and the namespace is not open to other wallets; sign in again once it is, or ask its owner for an invitation"}},
+	{authsvc.ErrDeviceLinkFunctionPolicy, deviceRefusal{http.StatusForbidden, ErrCodeDeviceLinkFunctionPolicy,
+		"sign in with the wallet and this device's key; the device is pending until the application's own functions admit it"}},
 	{authsvc.ErrDeviceBelongsToAnother, deviceRefusal{http.StatusForbidden, ErrCodeDeviceKeyTaken,
 		"a device key belongs to one account; generate a new key for this one"}},
 }
@@ -118,6 +130,13 @@ func writeDeviceRefusal(w http.ResponseWriter, err error) bool {
 		// answer says what this gateway's clock reads.
 		if errors.Is(err, authsvc.ErrDeviceProofClockSkew) {
 			body["server_time"] = time.Now().Unix()
+		}
+		// A revoked device is shown its revocation: who revoked it and what
+		// proves it, for the client to check with keys it already trusts
+		// before it acts on the refusal (authsvc.DeviceRevocationRecord).
+		var revoked *authsvc.DeviceRevokedError
+		if errors.As(err, &revoked) {
+			body["revocation"] = revoked.Revocation
 		}
 		writeJSON(w, candidate.refusal.status, body)
 		return true

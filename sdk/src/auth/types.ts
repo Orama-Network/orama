@@ -22,6 +22,13 @@ export interface WhoAmI {
   issued_at?: number;
   not_before?: number;
   expires_at?: number;
+  /** The device a device-bound session is bound to. */
+  device_id?: string;
+  /**
+   * That device's state: `pending` for the restricted session of a device the
+   * namespace has yet to approve, which holds no grant, or `active`.
+   */
+  device_state?: "pending" | "active";
   /** @deprecated The gateway does not return this; use `subject`. */
   address?: string;
 }

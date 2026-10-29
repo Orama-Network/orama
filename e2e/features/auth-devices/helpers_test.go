@@ -24,6 +24,9 @@ const (
 	// stalenessSlack covers the round trip and a close frame on top.
 	stalenessSlack = 5 * time.Second
 	pollEvery      = time.Second
+	// codeDeviceRevoked refuses every token of a revoked device, with its
+	// revocation (docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device).
+	codeDeviceRevoked = "DEVICE_REVOKED"
 	// Paths not in the harness's constant set (docs/whitepaper/technical-reference/appendices/i-api-surface.md).
 	pathDeviceStart   = "/v1/auth/device"
 	pathDeviceApprove = "/v1/auth/device/approve"
@@ -180,18 +183,33 @@ func perNode(t testing.TB, f *fleet.Fleet, c *gw.Client) []nodeClient {
 	return out
 }
 
-// refusedEverywhere waits until every client refuses bearer, within the
-// revocation staleness.
+// refusedEverywhere waits until every client refuses bearer with a 401,
+// within the revocation staleness.
 func refusedEverywhere(t testing.TB, nodes []nodeClient, bearer, what string) {
+	t.Helper()
+	refusedEverywhereWith(t, nodes, bearer, what, http.StatusUnauthorized, "")
+}
+
+// deviceRevokedEverywhere waits until every client refuses bearer, a token of
+// a revoked device, with 403 DEVICE_REVOKED, within the revocation staleness
+// (docs/whitepaper/technical-reference/vol1/13-identity.md#revoking-a-device).
+func deviceRevokedEverywhere(t testing.TB, nodes []nodeClient, bearer, what string) {
+	t.Helper()
+	refusedEverywhereWith(t, nodes, bearer, what, http.StatusForbidden, codeDeviceRevoked)
+}
+
+// refusedEverywhereWith waits until every client refuses bearer with status
+// and, unless it is "", code.
+func refusedEverywhereWith(t testing.TB, nodes []nodeClient, bearer, what string, status int, code string) {
 	t.Helper()
 	start := time.Now()
 	for _, nc := range nodes {
 		eventually.Require(t, pollEvery, revocationStaleness+stalenessSlack, nc.Node.Name+" to refuse "+what, func() (bool, error) {
-			st, code := whoamiStatus(t, nc.Client, bearer)
-			if st == http.StatusUnauthorized {
+			st, got := whoamiStatus(t, nc.Client, bearer)
+			if st == status && (code == "" || got == code) {
 				return true, nil
 			}
-			return false, fmt.Errorf("HTTP %d %s", st, code)
+			return false, fmt.Errorf("HTTP %d %s", st, got)
 		})
 	}
 	if took := time.Since(start); took > revocationStaleness+stalenessSlack {

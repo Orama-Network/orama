@@ -123,8 +123,10 @@ func TestDeviceLink_seedlessTakesTheApproversAccount(t *testing.T) {
 	if _, err := c.For(t).RevokeDevice(t.Context(), s.AccessToken, approver.ID(), proof(t, phone, wallet.ProofRevoke, n.Name, approver.ID())); err != nil {
 		t.Fatalf("revoking the approver: %v", err)
 	}
-	if r := claim(t, c, tablet, n.Name, late.DeviceCode); r.Status == http.StatusOK {
-		t.Fatal("a link approved by a since-revoked device was collected")
+	// The approval is void (access_denied); the collecting device is not the
+	// revoked one, and must not be told DEVICE_REVOKED.
+	if r := claim(t, c, tablet, n.Name, late.DeviceCode); r.Status != http.StatusBadRequest || !strings.Contains(string(r.Body), `"access_denied"`) {
+		t.Fatalf("collecting a link approved by a since-revoked device: %d %.300s, want 400 access_denied", r.Status, r.Body)
 	}
 }
 

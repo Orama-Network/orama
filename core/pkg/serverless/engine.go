@@ -406,6 +406,9 @@ func (e *Engine) Execute(ctx context.Context, fn *Function, input []byte, invCtx
 	// Likewise for the webrtc_* host calls, each of which writes the namespace's
 	// database and calls every SFU.
 	execCtx = WithWebRTCCounter(execCtx)
+	// And for approve_device / deny_device / deny_device_with_evidence, each of
+	// which writes the device registry.
+	execCtx = WithDeviceAdmissionCounter(execCtx)
 	// And for the gateway log lines its host calls write (bugboard #424).
 	execCtx, logBudget := WithHostLogBudget(execCtx)
 	// And an empty function_invoke_last_error slot (bugboard #263): it is new
@@ -1017,6 +1020,10 @@ func (e *Engine) registerHostModule(ctx context.Context) error {
 			NewFunctionBuilder().WithFunc(e.hGetCallerDeviceID).Export("get_caller_device_id").
 			NewFunctionBuilder().WithFunc(e.hGetCallerAttestation).Export("get_caller_attestation").
 			NewFunctionBuilder().WithFunc(e.hGetCallerAttestationVerdict).Export("get_caller_attestation_verdict").
+			NewFunctionBuilder().WithFunc(e.hGetCallerDeviceState).Export("get_caller_device_state").
+			NewFunctionBuilder().WithFunc(e.hApproveDevice).Export("approve_device").
+			NewFunctionBuilder().WithFunc(e.hDenyDevice).Export("deny_device").
+			NewFunctionBuilder().WithFunc(e.hDenyDeviceWithEvidence).Export("deny_device_with_evidence").
 			NewFunctionBuilder().WithFunc(e.hGetCallerCapability).Export("get_caller_capability").
 			NewFunctionBuilder().WithFunc(e.hCapabilityMint).Export("capability_mint").
 			NewFunctionBuilder().WithFunc(e.hCapabilityRevoke).Export("capability_revoke").
@@ -1050,6 +1057,7 @@ func (e *Engine) registerHostModule(ctx context.Context) error {
 			NewFunctionBuilder().WithFunc(e.hPushSendTopic).Export("push_send_topic").
 			NewFunctionBuilder().WithFunc(e.hTurnCredentials).Export("turn_credentials").
 			NewFunctionBuilder().WithFunc(e.hWebRTCAdmit).Export("webrtc_admit").
+			NewFunctionBuilder().WithFunc(e.hWebRTCAdmitWithMutes).Export("webrtc_admit_with_mutes").
 			NewFunctionBuilder().WithFunc(e.hWebRTCKick).Export("webrtc_kick").
 			NewFunctionBuilder().WithFunc(e.hWebRTCKickDevice).Export("webrtc_kick_device").
 			NewFunctionBuilder().WithFunc(e.hWebRTCMute).Export("webrtc_mute").

@@ -182,7 +182,7 @@ func TestInitAppConfig_sizesTheIAVLCacheForASharedHost(t *testing.T) {
 // them (core/pkg/install/chainconfig.go); a value changed in one place only would leave existing
 // nodes on the old one.
 func TestGlobalInstall_setsTheValuesOramadInitWrites(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "core", "pkg", "install", "chainconfig.go"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testdata", "repo", "core", "pkg", "install", "chainconfig.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

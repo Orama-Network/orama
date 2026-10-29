@@ -65,6 +65,15 @@ func TestClassifyInvokeError(t *testing.T) {
 			wantRetryable: true,
 		},
 		{
+			// feat-973: a pending device's session asking for a function not
+			// open to it gets the code every other route refuses it with.
+			name:          "a pending device refused a function is 403 DEVICE_PENDING_APPROVAL",
+			err:           serverless.PendingDeviceMayInvoke(&serverless.Function{Name: "fn"}, serverless.CallerDevicePending),
+			wantStatus:    http.StatusForbidden,
+			wantCode:      httputil.ErrCodeDevicePendingApproval,
+			wantRetryable: false,
+		},
+		{
 			// bug-939/bug-940: name@N of a replaced version names why it is
 			// refused, and an absent version stays plain NOT_FOUND.
 			name:          "a superseded version is 404 FUNCTION_VERSION_SUPERSEDED",
@@ -78,6 +87,15 @@ func TestClassifyInvokeError(t *testing.T) {
 			err:           serverless.ErrVersionNotFound,
 			wantStatus:    http.StatusNotFound,
 			wantCode:      httputil.ErrCodeNotFound,
+			wantRetryable: false,
+		},
+		{
+			// feat-971: a refusal no credential changes is 403 by name,
+			// never the 401 every other unauthorized answers.
+			name:          "a function only its parents may invoke is 403 FUNCTION_NOT_DIRECTLY_INVOCABLE",
+			err:           serverless.RefuseClientInvocation(&serverless.Function{Name: "send-message", InvocableBy: []string{"rpc-router"}}, false),
+			wantStatus:    http.StatusForbidden,
+			wantCode:      httputil.ErrCodeFunctionNotDirectlyInvocable,
 			wantRetryable: false,
 		},
 		{

@@ -60,6 +60,10 @@ type Session struct {
 	Namespace    string `json:"namespace"`
 	APIKey       string `json:"api_key,omitempty"`
 	DeviceID     string `json:"device_id,omitempty"`
+	// DeviceState is the bound device's state: "active", or "pending" for
+	// the restricted session of a device the namespace has yet to approve
+	// (the function device policy).
+	DeviceState string `json:"device_state,omitempty"`
 	// Status is "provisioning" on a 202 from a namespace still being built.
 	Status string `json:"status,omitempty"`
 	// issuedAt is when the request that returned the session was sent, zero

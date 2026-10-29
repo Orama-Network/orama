@@ -52,6 +52,21 @@ const DEFAULT_RECONNECT: ReconnectConfig = {
 /** Fraction of each backoff added as jitter, so clients do not return in step. */
 const RECONNECT_JITTER_RATIO = 0.25;
 
+/**
+ * Close codes the gateway ends a socket with, mirroring
+ * `core/pkg/gateway/wssession/registry.go`.
+ */
+export const WSCloseCode = {
+  /**
+   * The device the socket's token is bound to was revoked. Final: the client
+   * does not reconnect, since the device can never hold a session again. The
+   * close frame cannot carry the revocation; any request with the same token
+   * answers `DEVICE_REVOKED` with it (`deviceRevocationOf`), which the
+   * application checks (`verifyDeviceRevocation`) before it acts on it.
+   */
+  DeviceRevoked: 4410,
+} as const;
+
 export type WSMessageHandler = (data: string) => void;
 export type WSErrorHandler = (error: Error) => void;
 export type WSCloseHandler = (code: number, reason: string) => void;
@@ -222,9 +237,10 @@ export class WSClient {
   /**
    * Decide what a closed socket means.
    *
-   * A close the caller asked for, or one that arrives before the first
-   * successful connect, is final. Anything else is a drop, and the connection
-   * is re-established with backoff. The close handlers fire only when the
+   * A close the caller asked for, one that arrives before the first
+   * successful connect, or the gateway's close of a revoked device's socket
+   * (`WSCloseCode.DeviceRevoked`) is final. Anything else is a drop, and the
+   * connection is re-established with backoff. The close handlers fire only when the
    * connection is finished for good, so an application is not told the
    * subscription has ended while it is being restored.
    */
@@ -233,6 +249,7 @@ export class WSClient {
       this.reconnectConfig.enabled &&
       !this.isClosed &&
       this.wasConnected &&
+      code !== WSCloseCode.DeviceRevoked &&
       this.reconnectAttempt < this.reconnectConfig.maxAttempts;
 
     if (!shouldReconnect) {

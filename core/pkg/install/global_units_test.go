@@ -84,7 +84,7 @@ func TestGlobalChainUnit_userMatchesTestnetDeploy(t *testing.T) {
 	if !ok {
 		t.Fatal("no caller")
 	}
-	script := filepath.Join(filepath.Dir(file), "..", "..", "..", "chain", "scripts", "testnet", "deploy.sh")
+	script := filepath.Join(filepath.Dir(file), "..", "..", "testdata", "repo", "chain", "scripts", "testnet", "deploy.sh")
 	data, err := os.ReadFile(script)
 	if err != nil {
 		t.Fatalf("read %s: %v", script, err)

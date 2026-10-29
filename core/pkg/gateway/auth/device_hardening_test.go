@@ -344,7 +344,7 @@ func TestStartDeviceLink_refusesARevokedKey(t *testing.T) {
 	ctx := context.Background()
 	d := p256Device(t)
 	mustEnrol(t, s, deviceOwner, d, DeviceStateActive)
-	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, d.id); err != nil {
+	if err := s.RevokeDevice(ctx, "anchat", deviceOwner, d.id, byAccount); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
 	key, _ := ParseDeviceKey([]byte(d.jwk))

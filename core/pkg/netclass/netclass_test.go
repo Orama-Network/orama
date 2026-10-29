@@ -104,7 +104,7 @@ func TestCheckCommittee_empty(t *testing.T) {
 // chainFile reads a file of the chain module, which sits beside core/.
 func chainFile(t *testing.T, rel string) string {
 	t.Helper()
-	data, err := os.ReadFile("../../../chain/" + rel)
+	data, err := os.ReadFile("../../testdata/repo/chain/" + rel)
 	if err != nil {
 		t.Skipf("the chain sources are not reachable from here: %v", err)
 	}

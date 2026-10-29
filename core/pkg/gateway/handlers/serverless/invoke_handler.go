@@ -39,8 +39,14 @@ func classifyInvokeError(err error) (int, httputil.RPCErrorCode, bool) {
 		return http.StatusNotFound, httputil.ErrCodeNotFound, false
 	case serverless.IsResourceExhausted(err):
 		return http.StatusTooManyRequests, httputil.ErrCodeRateLimited, true
+	case errors.Is(err, serverless.ErrFunctionNotDirectlyInvocable):
+		// Before IsUnauthorized, which it also answers: no credential the
+		// caller could present changes it, so it is never a 401.
+		return http.StatusForbidden, httputil.ErrCodeFunctionNotDirectlyInvocable, false
 	case serverless.IsUnauthorized(err):
 		return http.StatusUnauthorized, httputil.ErrCodeUnauthorized, false
+	case serverless.IsDevicePendingApproval(err):
+		return http.StatusForbidden, httputil.ErrCodeDevicePendingApproval, false
 	default:
 		return http.StatusInternalServerError, httputil.ErrCodeFunctionExecution, false
 	}
@@ -114,6 +120,7 @@ func (h *ServerlessHandlers) InvokeFunction(w http.ResponseWriter, r *http.Reque
 		CallerClaims:      h.getCallerClaimsFromRequest(r),
 		CallerJWTSubject:  h.getJWTSubjectFromRequest(r),
 		CallerDeviceID:    h.getDeviceIDFromRequest(r),
+		CallerDeviceState: h.getDeviceStateFromRequest(r),
 		CallerAttestation: h.getAttestationFromRequest(r),
 	}
 

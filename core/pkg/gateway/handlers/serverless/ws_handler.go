@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Orama-Network/orama/core/pkg/gateway/auth"
 	"github.com/Orama-Network/orama/core/pkg/gateway/wssession"
+	"github.com/Orama-Network/orama/core/pkg/httputil"
 	"github.com/Orama-Network/orama/core/pkg/serverless"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -103,6 +105,24 @@ func (h *ServerlessHandlers) HandleWebSocket(w http.ResponseWriter, r *http.Requ
 
 	// Look up the function once to decide which execution model to use.
 	fn, lookupErr := h.registry.Get(r.Context(), namespace, name, version)
+	// A function that declares invocable_by is refused to a client on both
+	// models, before the upgrade (feat-971): every frame of a stateless socket
+	// would be refused by the invoker, and a persistent one never reaches it.
+	if lookupErr == nil && fn != nil {
+		if err := serverless.RefuseClientInvocation(fn, h.getCallerIsAdminFromRequest(r)); err != nil {
+			writeRPCError(w, http.StatusForbidden, httputil.ErrCodeFunctionNotDirectlyInvocable, err.Error())
+			return
+		}
+	}
+	// A pending device's restricted session (feat-973) opens a socket only to
+	// a function open to pending devices. The invoker refuses each frame of a
+	// stateless socket anyway; a persistent one never reaches the invoker, and
+	// neither socket is held open for a caller none of its frames could run.
+	if h.getDeviceStateFromRequest(r) == serverless.CallerDevicePending &&
+		(lookupErr != nil || fn == nil || !fn.OpenToPendingDevices) {
+		writeDevicePendingApproval(w, name)
+		return
+	}
 	if lookupErr == nil && fn != nil && fn.WSPersistent {
 		// The persistent path builds its InvocationContext directly and never
 		// reaches Invoke, so the authorization that the stateless path gets
@@ -129,6 +149,13 @@ func (h *ServerlessHandlers) HandleWebSocket(w http.ResponseWriter, r *http.Requ
 	// (lookup error not fatal — fall through; per-frame path's invoker will
 	// re-resolve and surface a proper error.)
 	h.handleStatelessWebSocket(w, r, namespace, name, version)
+}
+
+// writeDevicePendingApproval refuses a pending device's restricted session a
+// socket to a function that is not open to pending devices.
+func writeDevicePendingApproval(w http.ResponseWriter, name string) {
+	writeRPCError(w, http.StatusForbidden, httputil.ErrCodeDevicePendingApproval,
+		fmt.Sprintf("this device is waiting to be approved, and function %q is not open to pending devices", name))
 }
 
 // handleStatelessWebSocket runs the per-frame model: every frame is one
@@ -205,6 +232,7 @@ func (h *ServerlessHandlers) handleStatelessWebSocket(w http.ResponseWriter, r *
 	callerClaims := h.getCallerClaimsFromRequest(r)
 	callerJWTSubject := h.getJWTSubjectFromRequest(r)
 	callerDeviceID := h.getDeviceIDFromRequest(r)
+	callerDeviceState := h.getDeviceStateFromRequest(r)
 	callerAttestation := h.getAttestationFromRequest(r)
 	callerCapability := socketCapability(r)
 
@@ -236,6 +264,7 @@ func (h *ServerlessHandlers) handleStatelessWebSocket(w http.ResponseWriter, r *
 			CallerClaims:      callerClaims,
 			CallerJWTSubject:  callerJWTSubject,
 			CallerDeviceID:    callerDeviceID,
+			CallerDeviceState: callerDeviceState,
 			CallerAttestation: callerAttestation,
 			CallerCapability:  callerCapability,
 			WSClientID:        clientID,

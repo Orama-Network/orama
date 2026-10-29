@@ -161,6 +161,40 @@ describe('refreshing a device-bound session', () => {
   });
 });
 
+describe('a device the namespace admits with a function', () => {
+  // The function device policy: a later device signs in to a restricted
+  // session (device_state pending); its first refresh after a function
+  // approves it is a full session.
+  it('keeps the device state from the sign-in and follows it across refreshes', async () => {
+    let state = 'pending';
+    const { fetchImpl } = gateway({
+      '/v1/auth/verify': () => json(200, { ...session, device_state: 'pending' }),
+      '/v1/auth/refresh': () => json(200, { access_token: 'a.b.c', refresh_token: 'refresh-2', device_state: state }),
+    });
+    const { auth } = build(fetchImpl);
+    auth.setDeviceSigner(recordingSigner());
+
+    await auth.verify({ message: 'm', signature: 's', device_key: recordingSigner().publicJwk, device_signature: 'x' });
+    expect(await auth.deviceState()).toBe('pending');
+
+    await auth.refresh();
+    expect(await auth.deviceState()).toBe('pending');
+
+    state = 'active';
+    await auth.refresh();
+    expect(await auth.deviceState()).toBe('active');
+  });
+
+  it('has no device state for a session bound to no device', async () => {
+    const { fetchImpl } = gateway({
+      '/v1/auth/verify': () => json(200, { access_token: 'a.b.c', subject: '0xw', namespace: 'anchat' }),
+    });
+    const { auth } = build(fetchImpl);
+    await auth.verify({ message: 'm', signature: 's' });
+    expect(await auth.deviceState()).toBeUndefined();
+  });
+});
+
 describe('managing devices', () => {
   it('lists and revokes', async () => {
     const { fetchImpl, requests } = gateway({

@@ -117,6 +117,7 @@ func TestInternalAuthMiddleware_aV2HopKeepsTheTimesAndDropsTheBinding(t *testing
 	claims := hopClaims()
 	claims.Did, claims.Sid = "device-1", "session-1"
 	r := signedJWTHop(t, g.internalAuthKey, claims)
+	r.Header.Del(HeaderInternalAuthMACv8)
 	r.Header.Del(HeaderInternalAuthMACv7)
 	r.Header.Del(HeaderInternalAuthMACv6) // what a v2 gateway sends
 	r.Header.Del(HeaderInternalAuthMACv5)
@@ -145,6 +146,7 @@ func TestInternalAuthMiddleware_aV1HopIsAcceptedWithoutWhatV1DoesNotCover(t *tes
 	r.Header.Del(HeaderInternalAuthMACv3)
 	r.Header.Del(HeaderInternalAuthMACv4)
 	r.Header.Del(HeaderInternalAuthMACv5)
+	r.Header.Del(HeaderInternalAuthMACv8)
 	r.Header.Del(HeaderInternalAuthMACv7)
 	r.Header.Del(HeaderInternalAuthMACv6)
 	r.Header.Set(HeaderInternalAuthJWTExp, "9999999999")

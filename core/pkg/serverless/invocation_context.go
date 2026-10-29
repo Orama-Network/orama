@@ -129,3 +129,51 @@ func AddWebRTCCount(ctx context.Context) int64 {
 	}
 	return -1
 }
+
+// deviceAdmissionCounterKey is the unexported context-value key for the
+// per-invocation approve_device / deny_device / deny_device_with_evidence call counter.
+type deviceAdmissionCounterKey struct{}
+
+// deviceAdmissionCounter tracks how many approve_device, deny_device and deny_device_with_evidence calls a
+// single invocation has made.
+type deviceAdmissionCounter struct{ n atomic.Int64 }
+
+// WithDeviceAdmissionCounter returns a derived ctx carrying a FRESH
+// per-invocation counter of approve_device, deny_device and deny_device_with_evidence calls, for the same
+// reason as WithWebRTCCounter: each call writes the gateway's device registry.
+func WithDeviceAdmissionCounter(ctx context.Context) context.Context {
+	return context.WithValue(ctx, deviceAdmissionCounterKey{}, &deviceAdmissionCounter{})
+}
+
+// MaxDeviceAdmissionsPerInvocation caps how many approve_device, deny_device
+// and deny_device_with_evidence calls one invocation (or persistent socket
+// frame) may make. A real admission decides on one device; each call writes
+// the registry, and the WASM runtime has no fuel metering, so a runaway loop
+// would otherwise hammer it.
+const MaxDeviceAdmissionsPerInvocation = 16
+
+// DeviceAdmissionBudgetSpent reports whether the invocation has already made
+// MaxDeviceAdmissionsPerInvocation device-admission calls, without counting
+// one: a call that would be refused is refused before it reads its arguments
+// out of guest memory. False when the ctx carries no counter.
+func DeviceAdmissionBudgetSpent(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	dc, ok := ctx.Value(deviceAdmissionCounterKey{}).(*deviceAdmissionCounter)
+	return ok && dc.n.Load() >= MaxDeviceAdmissionsPerInvocation
+}
+
+// AddDeviceAdmissionCount adds one to the invocation's device-admission call
+// counter and returns the new running total. Returns -1 when the ctx carries no
+// counter (an untracked path) so callers can skip enforcement rather than
+// reject.
+func AddDeviceAdmissionCount(ctx context.Context) int64 {
+	if ctx == nil {
+		return -1
+	}
+	if dc, ok := ctx.Value(deviceAdmissionCounterKey{}).(*deviceAdmissionCounter); ok {
+		return dc.n.Add(1)
+	}
+	return -1
+}

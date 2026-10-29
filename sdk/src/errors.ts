@@ -63,6 +63,12 @@ export class SDKError extends Error {
       if (code === AuthCode.NamespaceMismatch) {
         return new NamespaceError(errorMsg, status, code, details);
       }
+      if (code === FunctionCode.NotDirectlyInvocable) {
+        return new FunctionNotDirectlyInvocableError(errorMsg, status, code, details);
+      }
+      if (code === AuthCode.DeviceRevoked) {
+        return new RevokedDeviceError(errorMsg, status, code, details);
+      }
       return new ScopeError(errorMsg, status, code, details);
     }
     if (status === 404) {
@@ -113,7 +119,11 @@ export const AuthCode = {
   Missing: "AUTH_MISSING",
   /** A credential was presented and is not one this cluster knows. */
   InvalidKey: "AUTH_INVALID_KEY",
-  /** The credential or session was revoked. Sign in again. */
+  /**
+   * The credential or session was revoked: the token, its session, the key it
+   * came from, or every session of its account. Sign in again. A token
+   * refused because its device was revoked is `DEVICE_REVOKED` instead.
+   */
   Revoked: "AUTH_REVOKED",
   /** The credential expired. Refresh, or sign in again. */
   Expired: "AUTH_EXPIRED",
@@ -187,10 +197,24 @@ export const AuthCode = {
    * rather than signing them out.
    */
   DeviceProofClockSkew: "DEVICE_PROOF_CLOCK_SKEW",
-  /** The device was revoked; its key can never hold a session again. */
+  /**
+   * The device was revoked; its key can never hold a session again. Sign-in,
+   * refresh, and any request or WebSocket upgrade with a token bound to it
+   * answer it (403), with `details.revocation`: who revoked it and what proves
+   * it. Check it with `verifyDeviceRevocation` before acting on it. A revoked
+   * token, session, key or account is `AUTH_REVOKED` instead.
+   */
   DeviceRevoked: "DEVICE_REVOKED",
   /** The device waits for another of the account's devices to approve it. */
   DevicePending: "DEVICE_PENDING",
+  /**
+   * The session is a pending device's restricted session (the namespace's
+   * function device policy) and this call is not open to it: it reaches its
+   * own session and the functions deployed `open_to_pending_devices`. Run the
+   * application's admission flow; once a function approves the device,
+   * `refresh()` and retry. `details.device_id` is the device.
+   */
+  DevicePendingApproval: "DEVICE_PENDING_APPROVAL",
   /** The account has no such device. */
   DeviceNotFound: "DEVICE_NOT_FOUND",
   /** The device key is enrolled for another account. */
@@ -202,6 +226,11 @@ export const AuthCode = {
    * the other kind (a device link offered to a wallet, a plain login to a device).
    */
   DeviceLoginMismatch: "DEVICE_LOGIN_MISMATCH",
+  /**
+   * A device link (starting, approving or collecting one) in a namespace
+   * whose own functions admit its users' devices (the function policy).
+   */
+  DeviceLinkFunctionPolicy: "DEVICE_LINK_FUNCTION_POLICY",
   /** The session policy is set, but revoking existing sign-in keys stopped partway. Repeat the request. */
   PolicySweepIncomplete: "POLICY_SWEEP_INCOMPLETE",
   /**
@@ -397,6 +426,25 @@ export class RevokedCredentialError extends AuthError {
 }
 
 /**
+ * 403 `DEVICE_REVOKED`: the device this client signs in as was revoked, and
+ * can never hold a session again. Not a missing grant: renewing or asking for
+ * more scopes cannot fix it. `details.revocation` says who revoked it and what
+ * proves it; check it with `verifyDeviceRevocation(deviceRevocationOf(err), …)`
+ * before erasing anything.
+ */
+export class RevokedDeviceError extends SDKError {
+  constructor(
+    message: string,
+    httpStatus: number = 403,
+    code: string = AuthCode.DeviceRevoked,
+    details: Record<string, any> = {}
+  ) {
+    super(message, httpStatus, code, details);
+    this.name = "RevokedDeviceError";
+  }
+}
+
+/**
  * The codes a function invoke fails with, beside the auth codes above.
  *
  * Mirrors `core/pkg/httputil/rpc_error.go`; the list only ever grows.
@@ -423,9 +471,35 @@ export const FunctionCode = {
    * owner roll back to make that version current. Not retryable.
    */
   VersionSuperseded: "FUNCTION_VERSION_SUPERSEDED",
+  /**
+   * 403: the function declares `invocable_by` and runs only when one of the
+   * functions it names calls it with `function_invoke` or
+   * `function_invoke_async`. No credential changes that: send the call through
+   * the function it names (an app's router). Raised as
+   * `FunctionNotDirectlyInvocableError`. Not retryable.
+   */
+  NotDirectlyInvocable: "FUNCTION_NOT_DIRECTLY_INVOCABLE",
 } as const;
 
 export type FunctionCode = (typeof FunctionCode)[keyof typeof FunctionCode];
+
+/**
+ * The function may not be invoked directly: it declares `invocable_by`, and
+ * only the functions it names may call it. It is not a `ScopeError`, because
+ * no grant the caller could ask for opens it; send the call through the
+ * function it names.
+ */
+export class FunctionNotDirectlyInvocableError extends SDKError {
+  constructor(
+    message: string,
+    httpStatus: number = 403,
+    code: string = FunctionCode.NotDirectlyInvocable,
+    details: Record<string, any> = {}
+  ) {
+    super(message, httpStatus, code, details);
+    this.name = "FunctionNotDirectlyInvocableError";
+  }
+}
 
 /**
  * The codes of the relayed-fetch path (`storage.fetchWith`).

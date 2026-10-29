@@ -57,6 +57,8 @@ func TestEngine_HostModule_WebRTCCallsExported(t *testing.T) {
 	want := map[string]struct{ params, results []api.ValueType }{
 		// (room ptr, len, user ptr, len, device ptr, len, ttl seconds) -> ptr<<32|len of the JSON, 0 on failure
 		"webrtc_admit": {[]api.ValueType{i32, i32, i32, i32, i32, i32, i64}, []api.ValueType{i64}},
+		// webrtc_admit's arguments, then muted, video muted -> as webrtc_admit (feat-972)
+		"webrtc_admit_with_mutes": {[]api.ValueType{i32, i32, i32, i32, i32, i32, i64, i32, i32}, []api.ValueType{i64}},
 		// (room ptr, len, user ptr, len) -> 1 done, 0 failed
 		"webrtc_kick": {[]api.ValueType{i32, i32, i32, i32}, []api.ValueType{i32}},
 		// (room ptr, len, user ptr, len, device ptr, len) -> 1 done, 0 failed

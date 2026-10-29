@@ -85,7 +85,7 @@ See [Access control and keys](/docs/developer/access-control).
 
 ## Authentication
 
-Every request carries `Authorization: Bearer <token>` and nothing else.
+Every request carries `Authorization: Bearer <token>` and nothing else. The sign-in routes (`challenge`, `verify`, `refresh`, the device-link routes and wallet-signed API key creation) carry their credential in the body and are sent no stored token, so a device whose old token was revoked can still sign in again.
 
 ### API key
 
@@ -155,7 +155,7 @@ const result = await client.auth.verify({
 });
 ```
 
-`deviceIdOf(publicJwk)` is the RFC 7638 thumbprint. A device-bound `verify` returns no API key; later refreshes sign a proof with the device key automatically, and without a signer `refresh()` throws `DEVICE_PROOF_REQUIRED`. When the namespace requires an existing device's approval, `verify` returns `{status: "pending_approval", user_code, device_code}` and stores nothing: show the user code, call `client.auth.approveDeviceLink(code)` on a device already signed in, then `client.auth.claimDeviceLink(device_code, namespace)` on the new one. `startDeviceLink({namespace})` starts a link with no wallet. `listDevices()` and `revokeDevice(id)` manage devices. `logout()` from a device-bound session ends that device's session only; `logout({ all: true })` ends every session of the account and, from a device-bound session, signs the device's proof for it. `deviceProofMessage` is exported for a client that signs proofs itself.
+`deviceIdOf(publicJwk)` is the RFC 7638 thumbprint. A device-bound `verify` returns no API key; later refreshes sign a proof with the device key automatically, and without a signer `refresh()` throws `DEVICE_PROOF_REQUIRED`. When the namespace requires an existing device's approval, `verify` returns `{status: "pending_approval", user_code, device_code}` and stores nothing: show the user code, call `client.auth.approveDeviceLink(code)` on a device already signed in, then `client.auth.claimDeviceLink(device_code, namespace)` on the new one. `startDeviceLink({namespace})` starts a link with no wallet. `listDevices()` and `revokeDevice(id, { evidence? })` manage devices; `evidence` is kept with the revoked device's tombstone and shown to it. A `DEVICE_REVOKED` error carries `details.revocation`: `verifyDeviceRevocation(deviceRevocationOf(err), { deviceId, namespace, trustedDeviceIds, verifySignature? })` checks it before the application acts on it, and answers `proven`, `unproven` or `invalid`, never throwing ([Devices](/docs/developer/devices#what-a-revoked-device-is-told)). `logout()` from a device-bound session ends that device's session only; `logout({ all: true })` ends every session of the account and, from a device-bound session, signs the device's proof for it. `deviceProofMessage` is exported for a client that signs proofs itself. Under the namespace's `function` device policy a later device's `verify` returns a session at once, restricted until one of the namespace's functions admits the device: `client.auth.deviceState()` resolves to `"pending"` (or `"active"`, or `undefined` for a session bound to no device), every route but its own session's and the functions open to pending devices throws code `AuthCode.DevicePendingApproval` (`DEVICE_PENDING_APPROVAL`), and once the function has approved the device, `refresh()` returns the full session and `deviceState()` becomes `"active"` ([Devices](/docs/developer/devices#devices-admitted-by-a-function)).
 
 Every proof is stamped on the gateway's clock, not the phone's: the client keeps, in memory, how far the gateway's clock is from the phone's as each answer's `Date` header shows it, so a phone whose clock is minutes off still refreshes. When the very first request is the proof and the gateway refuses it for its time, the SDK signs a new proof on the `server_time` the refusal carries and sends it once more. If that fails as well, the error's code is `AuthCode.DeviceProofClockSkew` (`DEVICE_PROOF_CLOCK_SKEW`): the phone's clock moved again, which is worth telling the user, not a reason to sign them out. A device-proof refusal (`DEVICE_PROOF_REQUIRED`, `DEVICE_PROOF_INVALID`, `DEVICE_PROOF_CLOCK_SKEW`) is never answered by renewing the session and replaying the request: the refusal is about the proof in the body, not the token.
 
@@ -213,7 +213,7 @@ const subscription = await client.pubsub.subscribe("room:general", {
 subscription.close();
 ```
 
-`data` is lossy for a payload that is not text; read `bytes` for anything binary. A dropped connection is re-established with exponential backoff (ten attempts by default) and the subscription resumes; `onClose` fires only when it is finished for good. Presence is opt-in:
+`data` is lossy for a payload that is not text; read `bytes` for anything binary. A dropped connection is re-established with exponential backoff (ten attempts by default) and the subscription resumes; `onClose` fires only when it is finished for good. A socket the gateway closed with `4410` (`WSCloseCode.DeviceRevoked`: this device was revoked) is not reconnected, and `onClose` fires at once. Presence is opt-in:
 
 ```ts
 await client.pubsub.subscribe("room:general", {
@@ -347,14 +347,16 @@ Every failure is an `SDKError`.
 |---|---|---|
 | `AuthError` | 401: credential missing, expired, or not enough alone | `requiredScope` |
 | `RevokedCredentialError` | 401 `AUTH_REVOKED`: sign in again, do not retry | |
+| `RevokedDeviceError` | 403 `DEVICE_REVOKED` on any request: this device was revoked and can never sign in again. Check `deviceRevocationOf(err)` with `verifyDeviceRevocation` before erasing anything | `details.revocation` |
 | `ScopeError` | 403: the credential's grants do not cover the operation | `requiredScope` |
 | `NamespaceError` | 403 `NAMESPACE_MISMATCH`: wrong gateway, or the key came from the wrong environment | `namespace`, `credentialNamespace` |
 | `AttestationError` | An attestation code (`ATTESTATION_*`, `APP_UPDATE_REQUIRED`), whatever the status: the device has not attested, its proof was refused, the build is too old, or an attest call could not be served | |
+| `FunctionNotDirectlyInvocableError` | 403 `FUNCTION_NOT_DIRECTLY_INVOCABLE`: the function declares `invocable_by` and runs only when a function it names calls it ([Invocable by](/docs/developer/functions#invocable-by)); no grant opens it, so call the router instead. Not retryable | |
 | `NotFoundError` | 404 | |
 | `NetworkError` | No HTTP response. `httpStatus` is 0 | `code` is `NETWORK_ERROR`, `TIMEOUT` or `ABORTED` |
 | `LogoutError` | `logout` cleared the device's session but the gateway did not end it | `serverError` |
 
-`error.code` is the gateway's own (full list in [Sign-in and sessions](/docs/developer/sign-in#error-codes)); `FunctionCode` names the codes a function invoke fails with (`RATE_LIMITED`, `FUNCTION_TIMEOUT`, `FUNCTION_UNAVAILABLE`, `FUNCTION_EXECUTION_FAILED`, `FUNCTION_VERSION_SUPERSEDED`). `error.retryable` is `true` or `false` when the gateway says, otherwise `undefined`. `Scope` and `Role` are exported types, so a grant name that does not exist is a compile error.
+`error.code` is the gateway's own (full list in [Sign-in and sessions](/docs/developer/sign-in#error-codes)); `FunctionCode` names the codes a function invoke fails with (`RATE_LIMITED`, `FUNCTION_TIMEOUT`, `FUNCTION_UNAVAILABLE`, `FUNCTION_EXECUTION_FAILED`, `FUNCTION_VERSION_SUPERSEDED`, `FUNCTION_NOT_DIRECTLY_INVOCABLE`). `error.retryable` is `true` or `false` when the gateway says, otherwise `undefined`. `Scope` and `Role` are exported types, so a grant name that does not exist is a compile error.
 
 ```ts
 import { NetworkError, ScopeError } from "@orama-network/orama";

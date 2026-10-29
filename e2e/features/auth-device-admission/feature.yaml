@@ -1,0 +1,44 @@
+# Devices admitted by the namespace's own functions (feat-973): under the
+# function device policy an account's first device signs in to a full
+# session, and a later one to a restricted session (device_state pending)
+# that is refused DEVICE_PENDING_APPROVAL on devices, sessions, pub/sub and
+# every function not deployed open_to_pending_devices; a function told its
+# caller's device state (get_caller_device_state) approves the device
+# (approve_device), after which the next refresh is a full session, or
+# denies it (deny_device, deny_device_with_evidence), which ends its session
+# on every gateway and answers its token and refresh token DEVICE_REVOKED
+# with the function's revocation and evidence; an account whose devices were
+# all revoked recovers through the function.
+# Needs tinygo on the runner's PATH.
+id: auth-device-admission
+title: Devices admitted by the namespace's functions
+area: auth
+subtasks: [4463]
+stage: 3
+destructive: false
+requires:
+  extra_nodes: 0
+  probe: false
+  chain: false
+covers:
+  cli:
+    - orama namespace session-policy
+  routes:
+    - /v1/auth/device
+    - /v1/auth/verify
+    - /v1/auth/refresh
+    - /v1/auth/devices
+    - /v1/auth/devices/
+    - /v1/auth/sessions
+    - /v1/auth/whoami
+    - /v1/pubsub/ws
+    - /v1/pubsub/publish
+    - /v1/namespace/devices/
+    - /v1/namespace/session-policy
+  claims:
+    - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: under the function policy the account's first device ever is active and every later one, recovery included, signs in to a pending session"
+    - "docs/whitepaper/technical-reference/vol1/14-authorization.md#a-pending-devices-session: a pending session is refused DEVICE_PENDING_APPROVAL on every route but its own session's and the function routes, and on every function not open_to_pending_devices"
+    - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: approve_device makes the next refresh a full session; deny_device ends the session on every gateway; neither acts on an active device"
+    - "docs/whitepaper/technical-reference/vol1/13-identity.md#devices-admitted-by-a-function: deny_device_with_evidence keeps the function's evidence; the denied device's token and refresh token answer DEVICE_REVOKED with revoked_by function, no proof, and the evidence verbatim"
+    - "website/src/docs/developer/devices.mdx#devices-admitted-by-a-function: under the function policy a device link is refused DEVICE_LINK_FUNCTION_POLICY"
+    - "website/src/docs/developer/functions.mdx#open-to-pending-devices: get_caller_device_state tells a function pending or active"

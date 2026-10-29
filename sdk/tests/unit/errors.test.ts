@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   AuthCode,
   AuthError,
+  FunctionCode,
+  FunctionNotDirectlyInvocableError,
   NetworkError,
   NotFoundError,
   RevokedCredentialError,
+  RevokedDeviceError,
   ScopeError,
   SDKError,
 } from '../../src/errors';
@@ -50,6 +53,19 @@ describe('SDKError.fromResponse', () => {
     const error = SDKError.fromResponse(403, { error: 'nope' });
     expect(error).toBeInstanceOf(ScopeError);
     expect(error).toBeInstanceOf(SDKError);
+  });
+
+  // feat-971: a function only its parents may invoke is refused by name; no
+  // grant opens it, so it is not a ScopeError.
+  it('returns a FunctionNotDirectlyInvocableError for 403 FUNCTION_NOT_DIRECTLY_INVOCABLE', () => {
+    const error = SDKError.fromResponse(403, {
+      ok: false,
+      error: { code: 'FUNCTION_NOT_DIRECTLY_INVOCABLE', message: 'runs only when rpc-router calls it', retryable: false },
+    });
+    expect(error).toBeInstanceOf(FunctionNotDirectlyInvocableError);
+    expect(error).not.toBeInstanceOf(ScopeError);
+    expect(error.code).toBe(FunctionCode.NotDirectlyInvocable);
+    expect(error.retryable).toBe(false);
   });
 
   it('returns a NotFoundError for 404', () => {
@@ -173,6 +189,21 @@ describe('auth codes', () => {
     expect(error).toBeInstanceOf(AuthError);
     expect(error).toBeInstanceOf(SDKError);
     expect(error.code).toBe('AUTH_REVOKED');
+  });
+
+  /**
+   * feat-976: DEVICE_REVOKED reaches any request of a revoked device. As a
+   * ScopeError it read as a missing grant, which an application answers by
+   * asking for more scopes, not by checking the revocation.
+   */
+  it('gives a revoked device its own error, not a missing grant', () => {
+    const revocation = { device_id: 'dev-1', revoked_at: null, revoked_by: 'account', proof: null, evidence: null };
+    const error = SDKError.fromResponse(403, { error: 'this device was revoked', code: AuthCode.DeviceRevoked, revocation });
+
+    expect(error).toBeInstanceOf(RevokedDeviceError);
+    expect(error).not.toBeInstanceOf(ScopeError);
+    expect(error.httpStatus).toBe(403);
+    expect(error.details.revocation).toEqual(revocation);
   });
 
   it('keeps a plain AuthError for the other 401 causes', () => {

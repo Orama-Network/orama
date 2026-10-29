@@ -84,7 +84,8 @@ func readRefreshRow(row []interface{}) refreshRow {
 	return out
 }
 
-// checkSessionRefresh is what a refresh must show beyond the refresh token.
+// checkSessionRefresh is what a refresh must show beyond the refresh token,
+// and whether the session it renews is a pending device's.
 //
 // A session bound to a device needs the device (checkDeviceRefresh). A session
 // bound to none is refused in a namespace whose policy now requires devices, so
@@ -92,51 +93,67 @@ func readRefreshRow(row []interface{}) refreshRow {
 // their next refresh rather than leaving them refreshing for ever. Either kind
 // of session of a wallet holding no grant also ends when the namespace closes
 // sign-in (checkSignInStillOpen).
-func (s *Service) checkSessionRefresh(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) error {
-	if err := s.checkSessionBinding(ctx, namespace, session, refreshToken, proof); err != nil {
-		return err
+func (s *Service) checkSessionRefresh(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) (pending bool, err error) {
+	if pending, err = s.checkSessionBinding(ctx, namespace, session, refreshToken, proof); err != nil {
+		return false, err
 	}
-	return s.checkSignInStillOpen(ctx, namespace, session.subject)
+	return pending, s.checkSignInStillOpen(ctx, namespace, session.subject)
 }
 
-func (s *Service) checkSessionBinding(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) error {
+func (s *Service) checkSessionBinding(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) (bool, error) {
 	if session.deviceID != "" {
 		return s.checkDeviceRefresh(ctx, namespace, session, refreshToken, proof)
 	}
 	policy, err := s.refreshDevicePolicyFor(ctx, namespace, session.subject)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRefreshTransient, err)
+		return false, fmt.Errorf("%w: %v", ErrRefreshTransient, err)
 	}
 	if policy != DevicePolicyOptional {
-		return ErrDeviceRequired
+		return false, ErrDeviceRequired
 	}
-	return nil
+	return false, nil
 }
 
 // checkDeviceRefresh is what a device-bound session's refresh must show: the
-// device is still the account's and active, and it signed for this refresh
-// token, now.
+// device is still the account's and active — or pending, in a namespace whose
+// policy is function, which renews the restricted session — and it signed for
+// this refresh token, now. Whether the device is pending is read from the
+// registry, not from the session, so the first refresh after a function
+// approved the device is a full session.
 //
 // A registry that cannot be read is a retryable failure, not a verdict on the
 // device — the same line RefreshToken draws for the token itself (bugboard
 // #125).
-func (s *Service) checkDeviceRefresh(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) error {
-	device, err := s.RequireActiveDevice(ctx, namespace, session.subject, session.deviceID)
+func (s *Service) checkDeviceRefresh(ctx context.Context, namespace string, session refreshRow, refreshToken string, proof *DeviceProof) (bool, error) {
+	device, err := s.RequireSessionDevice(ctx, namespace, session.subject, session.deviceID)
 	if err != nil {
 		if IsDeviceError(err) {
-			return err
+			return false, err
 		}
-		return fmt.Errorf("%w: %v", ErrRefreshTransient, err)
+		return false, fmt.Errorf("%w: %v", ErrRefreshTransient, err)
+	}
+	pending := device.State == DeviceStatePending
+	if pending {
+		// Only the function policy gives a pending device a session. Under
+		// approval it waits for its user code, and a namespace that left the
+		// function policy took the pending sessions with it.
+		policy, err := s.refreshDevicePolicyFor(ctx, namespace, session.subject)
+		if err != nil {
+			return false, fmt.Errorf("%w: %v", ErrRefreshTransient, err)
+		}
+		if policy != DevicePolicyFunction {
+			return false, ErrDevicePending
+		}
 	}
 	key, err := device.Key()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := s.VerifyDeviceProof(ctx, key, DeviceProofRefresh, namespace, refreshToken, proof); err != nil {
 		if errors.Is(err, ErrNonceTransient) {
-			return fmt.Errorf("%w: %v", ErrRefreshTransient, err)
+			return false, fmt.Errorf("%w: %v", ErrRefreshTransient, err)
 		}
-		return err
+		return false, err
 	}
-	return nil
+	return pending, nil
 }

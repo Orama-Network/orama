@@ -3,7 +3,7 @@
 > **At a glance.**
 >
 > - **What:** three per-namespace services layered on the namespace gateway. Serverless functions run tenant WebAssembly in a wazero sandbox inside the gateway. Push notifications route a message to a device through APNs, Expo or ntfy, using the namespace's own credentials. WebRTC runs a pion selective forwarding unit (SFU) on each member node and one shared TURN relay per host.
-> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 55 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
+> - **Key numbers:** functions have 1 to 256 MB (default 64) and 1 to 60 s (default 30), reach the platform through 60 host functions, and run five at a time per namespace gateway. Push dispatchers are cached 30 s and rotating topics live 7 to 8 days. A WebRTC room holds at most 100 peers, a join ticket lives 30 s, TURN listens on 3478 and 5349 with relay ports 49152-65535.
 > - **Code:** `core/pkg/serverless/`, `core/pkg/push/`, `core/pkg/sfu/`, `core/pkg/turn/`.
 
 ![Serverless functions: callers, the namespace gateway and what a function can reach](../technical-reference/diagrams/ch21-overview.svg)
@@ -26,7 +26,7 @@ A guest sees stdin, stdout, the host clocks and the host CSPRNG: no filesystem, 
 
 Deploy records the uploaded WASM's SHA-256 (`wasm_sha256`; the sealed blob's CID differs per deploy), seals the WASM under the cluster wrap key, pins it on every IPFS Cluster peer, and fails unless the cluster reports it pinned within 30 s; a garbage collection once deleted functions pinned on only three peers. Each deploy inserts a new version row and supersedes the one before it; ten are kept. Only the current version runs: `name@N` of a superseded version is refused with 404 `FUNCTION_VERSION_SUPERSEDED`, and a rollback makes an earlier version current again. A purge, for the owner or an admin, removes a function's rows, triggers and history for good. The version insert and trigger hand-over are separate statements, so a deploy is not atomic.
 
-Invocation checks that the namespace is served here, then authorizes: an internal function is admin-only, a public one is open, any other needs the invoke grant, which a signed-in wallet or a key with the `invoke` scope holds. Retries double the delay, up to five, and a final failure can publish to a dead-letter topic. A function past its deadline answers 504 `FUNCTION_TIMEOUT`, which is not retryable because the function ran; a rate limit, which refused the call before it ran, answers 429.
+Invocation checks the namespace is served here, then authorizes: an `invocable_by` function runs only for its named parents; an internal function is admin-only, a public one is open, any other needs the invoke grant, which a signed-in wallet or a key with the `invoke` scope holds. Retries double the delay, up to five; a final failure can reach a dead-letter topic. A function past its deadline answers 504 `FUNCTION_TIMEOUT`, not retryable because it ran; a rate limit refuses 429 before it runs.
 
 ### Triggers
 
@@ -34,7 +34,7 @@ Two trigger kinds start an invocation with no caller. Every gateway polls cron r
 
 ### Host functions and egress
 
-The 55 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, HTTP and nested invocation. A function is the namespace's own code, so host calls do not re-check the caller.
+The 60 host functions cover the namespace database, cache, pub/sub, push, WebRTC control, device admission, HTTP and nested invocation. A function is the namespace's own code, so host calls skip re-checking the caller.
 
 Outbound `http_fetch` runs from the cluster's own network, so the guard sits where the address is final: a dial-time check on every resolved address and redirect hop refuses loopback, private, link-local and carrier-grade ranges and the chain's block. A name that resolved to an overlay address once passed a URL check and reached the mesh. `anon_fetch` goes through the node's Tor client with no direct fallback, so it fails loudly rather than leak the gateway's address.
 

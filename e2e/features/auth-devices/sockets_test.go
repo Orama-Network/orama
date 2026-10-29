@@ -27,6 +27,9 @@ const (
 	// closeRevoked: "the token, its session or its subject was revoked"
 	// (docs/whitepaper/technical-reference/vol1/13-identity.md#open-websockets).
 	closeRevoked = 4403
+	// closeDeviceRevoked: "the device the token is bound to was revoked"
+	// (docs/whitepaper/technical-reference/vol1/13-identity.md#open-websockets).
+	closeDeviceRevoked = 4410
 	// sweepBudget: sockets are re-checked every 10 seconds; a close frame
 	// and the round trip come on top.
 	sweepBudget = revocationStaleness + stalenessSlack
@@ -100,15 +103,16 @@ func (w *watched) closeCode(t testing.TB, within time.Duration) int {
 }
 
 // TestSocketRevocation_closesWith4403: a subscription opened with a token is
-// closed with 4403 within ten seconds when that token is revoked (logout),
-// its session is ended, or its device is revoked — on the public and on the
-// namespace gateway (docs/whitepaper/technical-reference/vol1/13-identity.md#open-websockets).
+// closed with 4403 within ten seconds when that token is revoked (logout) or
+// its session is ended, and with 4410 when its device is revoked — on the
+// public and on the namespace gateway (docs/whitepaper/technical-reference/vol1/13-identity.md#open-websockets).
 func TestSocketRevocation_closesWith4403(t *testing.T) {
 	t.Parallel()
 	f := harness.Fleet(t)
 	n := ns.New(t, f, ns.Options{})
 	c := harness.GW(t)
 	w := member(t, n, roleRuntime)
+	closesWith := map[string]int{"logout": closeRevoked, "session ended": closeRevoked, "device revoked": closeDeviceRevoked}
 	revokers := map[string]func(s *gw.Session, d *wallet.Device, plain *gw.Session){
 		"logout": func(s *gw.Session, _ *wallet.Device, _ *gw.Session) {
 			if _, err := c.For(t).Logout(t.Context(), s.AccessToken, s.RefreshToken, n.Name, false); err != nil {
@@ -135,8 +139,8 @@ func TestSocketRevocation_closesWith4403(t *testing.T) {
 		viaNS := mustSubscribe(t, n.Client, s.AccessToken, nil)
 		revoke(s, d, plain)
 		for gwName, conn := range map[string]*watched{"public gateway": viaMain, "namespace gateway": viaNS} {
-			if code := conn.closeCode(t, sweepBudget); code != closeRevoked {
-				t.Errorf("%s, %s: socket closed with %d, want %d within %s", name, gwName, code, closeRevoked, sweepBudget)
+			if code := conn.closeCode(t, sweepBudget); code != closesWith[name] {
+				t.Errorf("%s, %s: socket closed with %d, want %d within %s", name, gwName, code, closesWith[name], sweepBudget)
 			}
 		}
 	}

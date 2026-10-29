@@ -26,11 +26,14 @@
 # by its session's device id (get_caller_device_id) joins while another device
 # of the account is refused, webrtc_admission reports each device's verdict,
 # and webrtc_kick_device removes and refuses that device alone, even against
-# an older admission of every device.
+# an older admission of every device. feat-972: a device admitted with its
+# mutes stated (webrtc_admit_with_mutes) that joins and publishes audio and
+# video at once has none of either forwarded, with no mute call after the
+# admission; webrtc_admission reports the mutes; unmuting lets both flow.
 id: webrtc
 title: WebRTC (SFU and TURN)
 area: webrtc
-subtasks: [2838, 726, 4074, 4158]
+subtasks: [2838, 726, 4074, 4158, 4462]
 stage: 6
 destructive: false
 requires:
@@ -71,4 +74,5 @@ covers:
     - "website/src/docs/developer/webrtc.mdx#audio-and-video-state: audio-state and video-state are relayed to the room as participant-state; a frame without enabled is invalid_state, not unknown_message"
     - "website/src/docs/developer/webrtc.mdx#kick-and-mute: webrtc_mute_video stops forwarding the user's video on the SFU and not their audio, is announced as a forced participant-state of kind video, holds through a rejoin, until unmuted"
     - "website/src/docs/developer/webrtc.mdx#admitting-one-device: a device admitted by its session's device id joins and another device of the same account is refused; webrtc_admission reports admitted, revoked and never-admitted devices; webrtc_kick_device closes that device alone (leave reason kicked with its device_id), refuses its rejoin as revoked, leaves the other device in the room, and outranks an older admission of every device"
-    - "website/src/docs/developer/functions.mdx#host-functions-api: webrtc_admit, webrtc_kick, webrtc_kick_device, webrtc_mute, webrtc_mute_video and webrtc_admission act on the calling function's namespace"
+    - "website/src/docs/developer/webrtc.mdx#admitting-with-mutes: a device admitted with webrtc_admit_with_mutes muted and video-muted that joins and publishes at once has neither its audio nor its video forwarded from its first packet, with no mute call after the admission; webrtc_admission reports the mutes; webrtc_mute and webrtc_mute_video lift them"
+    - "website/src/docs/developer/functions.mdx#host-functions-api: webrtc_admit, webrtc_admit_with_mutes, webrtc_kick, webrtc_kick_device, webrtc_mute, webrtc_mute_video and webrtc_admission act on the calling function's namespace"

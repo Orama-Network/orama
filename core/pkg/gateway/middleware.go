@@ -142,8 +142,14 @@ func setInternalAuthJWTHeaders(h http.Header, claims *auth.JWTClaims) {
 	if claims == nil {
 		return
 	}
+	// A pending device's subject goes in a field only a gateway that knows
+	// about pending devices reads (v8): to an older one the hop has no caller.
+	subjectHeader := HeaderInternalAuthJWTSub
+	if claims.PendingDevice() {
+		subjectHeader = HeaderInternalAuthJWTPendingSub
+	}
 	if sub := strings.TrimSpace(claims.Sub); sub != "" {
-		h.Set(HeaderInternalAuthJWTSub, sub)
+		h.Set(subjectHeader, sub)
 	}
 	if len(claims.Custom) > 0 {
 		buf, err := json.Marshal(claims.Custom)
@@ -261,18 +267,28 @@ func stripJWTQueryParam(r *http.Request) {
 // refused with an error.
 func claimsFromInternalAuthHeaders(h http.Header, namespace string, now time.Time) (*auth.JWTClaims, error) {
 	sub := strings.TrimSpace(h.Get(HeaderInternalAuthJWTSub))
+	audience := auth.AudienceGateway
+	if sub == "" {
+		sub = strings.TrimSpace(h.Get(HeaderInternalAuthJWTPendingSub))
+		audience = auth.AudiencePendingDevice
+	}
 	if sub == "" {
 		return nil, nil
+	}
+	did := strings.TrimSpace(h.Get(HeaderInternalAuthJWTDid))
+	if audience == auth.AudiencePendingDevice && did == "" {
+		return nil, fmt.Errorf("the forwarded pending session names no device")
 	}
 	exp, iat, err := hopTokenTimes(h, now)
 	if err != nil {
 		return nil, err
 	}
 	claims := &auth.JWTClaims{
+		Aud:       audience,
 		Sub:       sub,
 		Namespace: namespace,
 		Jti:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTJti)),
-		Did:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTDid)),
+		Did:       did,
 		Sid:       strings.TrimSpace(h.Get(HeaderInternalAuthJWTSid)),
 		Exp:       exp,
 		Iat:       iat,
@@ -317,6 +333,50 @@ func decodeHopAttestation(raw string) (*auth.AttestationClaim, error) {
 // tells a revoked session from an unknown credential (namespaceProxyAuthCode).
 const sessionRevokedMessage = "this session was ended, or the key it came from was revoked"
 
+// deviceRevokedMessage is what a token refused because its device was revoked
+// says. validateAuthForNamespaceProxy returns it with the refused token's
+// claims, and the refusal is answered by refuseRevokedDevice.
+const deviceRevokedMessage = "this device was revoked; it cannot sign in or hold a session again"
+
+// refuseRevokedDevice answers a token the revocation list refused for its
+// device. The registry decides what it is told, read here, for a request
+// already refused, never on a healthy one (auth.Service.DeviceRevocationRecord):
+//
+//   - the device's row is revoked: 403 DEVICE_REVOKED with its revocation,
+//     for the client to check before it acts on it;
+//   - there is no such device, or namespace: 401 AUTH_REVOKED, the token's
+//     refusal, since there is no revocation to show and a device that is not
+//     revoked is never told it is;
+//   - the row is not revoked, or cannot be read: a retryable 503, as a
+//     revocation list that cannot be read is. The list is written after the
+//     tombstone, so a row that disagrees is a read that has not caught up.
+func (g *Gateway) refuseRevokedDevice(w http.ResponseWriter, r *http.Request, claims *auth.JWTClaims) {
+	rec, err := g.authService.DeviceRevocationRecord(r.Context(), claims.Namespace, claims.Did)
+	switch {
+	case errors.Is(err, auth.ErrDeviceNotRevoked):
+		unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+	case err != nil:
+		g.logger.ComponentWarn("gateway", "could not confirm a revoked device's revocation",
+			zap.String("device_id", claims.Did), zap.Error(err))
+		unavailable(w, CodeAuthUnavailable, authUnavailableMessage)
+	default:
+		forbidden(w, CodeDeviceRevoked, deviceRevokedMessage, map[string]any{"revocation": rec})
+	}
+}
+
+// refuseProxyCredential answers a credential validateAuthForNamespaceProxy
+// refused (errMsg); claims are what it returned beside the refusal.
+func (g *Gateway) refuseProxyCredential(w http.ResponseWriter, r *http.Request, errMsg string, claims *auth.JWTClaims) {
+	switch errMsg {
+	case deviceRevokedMessage:
+		g.refuseRevokedDevice(w, r, claims)
+	case authUnavailableMessage:
+		unavailable(w, CodeAuthUnavailable, errMsg)
+	default:
+		unauthorized(w, namespaceProxyAuthCode(errMsg), errMsg, nil)
+	}
+}
+
 // authUnavailableMessage is what a request answers when whether its credential
 // was revoked cannot be told (auth.ErrRevocationsUnavailable). The namespace
 // proxy carries a refusal as a message, so this is also how it is told apart
@@ -351,6 +411,9 @@ func namespaceProxyAuthCode(errMsg string) string {
 // namespace gateways (which have isolated RQLites without API keys).
 //
 // Returns:
+//   - ("", claims, deviceRevokedMessage) if the token was refused because its
+//     device was revoked: claims are the refused token's, which name the
+//     device (refuseRevokedDevice).
 //   - (namespace, claims, "") if auth is valid via JWT — claims may be used to
 //     populate internal-auth headers so the namespace gateway can hydrate
 //     `caller_jwt_subject` for serverless host functions (bug #215).
@@ -378,6 +441,12 @@ func (g *Gateway) validateAuthForNamespaceProxy(r *http.Request) (namespace stri
 				}
 				// A revoked token is not an absent one: falling through would
 				// have the request answered "no credential was presented".
+				// One refused for its device carries its claims, which name
+				// the device whose revocation the refusal shows.
+				var revokedDevice *auth.DeviceTokenRevokedError
+				if errors.As(err, &revokedDevice) {
+					return "", revokedDevice.Claims, keyAuthority{}, deviceRevokedMessage
+				}
 				if errors.Is(err, auth.ErrTokenRevoked) {
 					return "", nil, keyAuthority{}, sessionRevokedMessage
 				}
@@ -411,6 +480,10 @@ func (g *Gateway) validateAuthForNamespaceProxy(r *http.Request) (namespace stri
 					}
 					return ns, c, key, ""
 				}
+			}
+			var revokedDevice *auth.DeviceTokenRevokedError
+			if errors.As(err, &revokedDevice) {
+				return "", revokedDevice.Claims, keyAuthority{}, deviceRevokedMessage
 			}
 			if errors.Is(err, auth.ErrTokenRevoked) {
 				return "", nil, keyAuthority{}, sessionRevokedMessage
@@ -835,7 +908,7 @@ func (g *Gateway) tunnelWebSocket(w http.ResponseWriter, r *http.Request, target
 func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 	// Order: internal-auth -> route policy -> logging -> security headers ->
 	// CORS -> rate limit -> readiness -> domain routing -> cluster serverless
-	// routing -> auth -> traffic attribution -> attestation -> authorization ->
+	// routing -> auth -> pending-device gate -> traffic attribution -> attestation -> authorization ->
 	// scope -> namespace rate limit -> long-request deadlines -> handler
 	//
 	// CORS is above the rate limit so that a refusal by the limiter (a 429)
@@ -870,6 +943,11 @@ func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 	// deliver. It stays above domain routing and auth, so no handler and no
 	// WebSocket upgrade is reached while the gateway cannot serve.
 	//
+	// The pending-device gate sits directly inside auth, the first point that
+	// knows the caller, so a pending device's restricted session is refused on
+	// every route that does not admit one before anything acts for it
+	// (pending_device_gate.go).
+	//
 	// The scope gate (bugboard #148) runs after ownership so it only ever
 	// tightens an already-authorized request; it never authorizes on its own.
 	//
@@ -890,11 +968,12 @@ func (g *Gateway) withMiddleware(next http.Handler) http.Handler {
 								g.domainRoutingMiddleware(
 									g.clusterServerlessRoutingMiddleware(
 										g.authMiddleware(
-											g.trafficAttributionMiddleware(
-												g.attestationMiddleware(
-													g.authorizationMiddleware(
-														g.scopeMiddleware(
-															g.namespaceRateLimitMiddleware(longRequestDeadlines(next)))))))))))))))))
+											g.pendingDeviceGate(
+												g.trafficAttributionMiddleware(
+													g.attestationMiddleware(
+														g.authorizationMiddleware(
+															g.scopeMiddleware(
+																g.namespaceRateLimitMiddleware(longRequestDeadlines(next))))))))))))))))))
 }
 
 // securityHeadersMiddleware adds standard security headers to all responses
@@ -950,6 +1029,26 @@ func (g *Gateway) loggingMiddleware(next http.Handler) http.Handler {
 			g.logBatcher.Add(newRequestLogEntry(r, policy, srw.status, srw.bytes, dur, attribution.keyID))
 		}
 	})
+}
+
+// refuseRevokedToken answers a token the revocation list refused, and reports
+// whether it did. A token refused because its device was revoked is answered
+// DEVICE_REVOKED with the device's revocation on every route, public ones
+// included: served as anonymous, the device would go on working with nothing
+// telling it it was revoked. The main gateway in front of a namespace refuses
+// it the same way (proxyToNamespaceGateway). Any other revoked token is
+// AUTH_REVOKED, on a route that is not public.
+func (g *Gateway) refuseRevokedToken(w http.ResponseWriter, r *http.Request, err error, isPublic bool) bool {
+	var revokedDevice *auth.DeviceTokenRevokedError
+	switch {
+	case errors.As(err, &revokedDevice):
+		g.refuseRevokedDevice(w, r, revokedDevice.Claims)
+		return true
+	case isPublic || !errors.Is(err, auth.ErrTokenRevoked):
+		return false
+	}
+	unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+	return true
 }
 
 // authMiddleware enforces auth when enabled via config.
@@ -1056,8 +1155,7 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 					// would have it looked up as an API key and refused as an
 					// unknown credential, which tells the holder nothing about
 					// why their session stopped working.
-					if errors.Is(err, auth.ErrTokenRevoked) && !isPublic {
-						unauthorized(w, CodeAuthRevoked, sessionRevokedMessage, nil)
+					if g.refuseRevokedToken(w, r, err, isPublic) {
 						return
 					}
 					if errors.Is(err, auth.ErrRevocationsUnavailable) && !isPublic {
@@ -1101,6 +1199,9 @@ func (g *Gateway) authMiddleware(next http.Handler) http.Handler {
 			// Anything larger is either malformed or a DoS attempt.
 			if tok != "" && len(tok) <= maxQueryJWTLength && strings.Count(tok, ".") == 2 {
 				claims, err := g.authService.ParseAndVerifyJWT(tok)
+				if g.refuseRevokedToken(w, r, err, isPublic) {
+					return
+				}
 				if errors.Is(err, auth.ErrRevocationsUnavailable) && !isPublic {
 					unavailable(w, CodeAuthUnavailable, authUnavailableMessage)
 					return
@@ -1337,18 +1438,22 @@ func (g *Gateway) authorizationMiddleware(next http.Handler) http.Handler {
 				ownerID = subj
 			}
 		}
+		// A key is identified by its stored form, the value api_keys.key and
+		// its service-account principal hold. An exchanged token's subject is
+		// already that form (the exchange mints it so); a bare key is the raw
+		// key and is hashed here, once.
 		if ownerType == "" && ownerID == "" {
 			if v := ctx.Value(ctxKeyAPIKey); v != nil {
 				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 					ownerType = "api_key"
-					ownerID = strings.TrimSpace(s)
+					ownerID = g.authService.HashAPIKey(strings.TrimSpace(s))
 				}
 			}
 		} else if ownerType == "wallet" {
 			// If we have a JWT wallet, also capture the API key as fallback
 			if v := ctx.Value(ctxKeyAPIKey); v != nil {
 				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-					apiKeyFallback = strings.TrimSpace(s)
+					apiKeyFallback = g.authService.HashAPIKey(strings.TrimSpace(s))
 				}
 			}
 		}
@@ -1380,15 +1485,9 @@ func (g *Gateway) authorizationMiddleware(next http.Handler) http.Handler {
 		nsID := nres.Rows[0][0]
 
 		// grantFor reports the live grant (ot, oid) holds in this namespace, if
-		// any. API keys are stored HMAC-hashed (see service.HashAPIKey) while
-		// the presented value here is the RAW key, so a key is looked up under
-		// its hashed form only.
+		// any. For a key, oid is its stored form, never the raw key.
 		grantFor := func(ot, oid string) *auth.Grant {
-			hashed := ""
-			if ot == "api_key" {
-				hashed = g.authService.HashAPIKey(oid)
-			}
-			for _, c := range principalIdentifierCandidates(ot, oid, hashed) {
+			for _, c := range principalIdentifierCandidates(ot, oid) {
 				grant, gerr := g.authService.GrantIn(internalCtx, db, nsID, grantPrincipalType(ot), c)
 				if gerr == nil {
 					return grant
@@ -1469,11 +1568,9 @@ func (g *Gateway) lookupRequestGrant(r *http.Request) (*auth.Grant, error) {
 	}
 	nsID := nres.Rows[0][0]
 
-	hashed := ""
-	if ownerType == "api_key" {
-		hashed = g.authService.HashAPIKey(ownerID)
-	}
-	for _, c := range principalIdentifierCandidates(ownerType, ownerID, hashed) {
+	// The subject of an exchanged key's token is the key's stored form, which
+	// is what its principal is recorded under.
+	for _, c := range principalIdentifierCandidates(ownerType, ownerID) {
 		grant, gerr := g.authService.GrantIn(internalCtx, db, nsID, grantPrincipalType(ownerType), c)
 		switch {
 		case gerr == nil:
@@ -1529,10 +1626,10 @@ func grantPrincipalType(ownerType string) auth.PrincipalType {
 }
 
 // loggableOwnerID is how an owner appears in a log line. For an API key the
-// owner id is the raw key — a live credential — so its fingerprint is logged
-// instead (auth.KeyFingerprint; not HashAPIKey, which returns the key itself
-// when no HMAC secret is configured). A wallet address is public and logged
-// as is (bugboard #2508).
+// owner id is the key's stored form, which is the raw key — a live credential —
+// on a cluster with no HMAC secret configured, so its fingerprint is logged
+// instead (auth.KeyFingerprint). A wallet address is public and logged as is
+// (bugboard #2508).
 func loggableOwnerID(ownerType, ownerID string) string {
 	if ownerType != "api_key" {
 		return ownerID
@@ -1543,9 +1640,14 @@ func loggableOwnerID(ownerType, ownerID string) string {
 // principalIdentifierCandidates returns the identifiers to look a principal up
 // under.
 //
-// API keys are stored HMAC-hashed, and MigratePlaintextAPIKeys moves any
-// leftover raw-key principal to the hashed form before the gateway serves, so
-// a key is looked up under its hashed form only.
+// A key's principal is recorded under the key's stored form: the HMAC when one
+// is configured, the raw key when it is not (MigratePlaintextAPIKeys moves any
+// leftover raw-key principal before the gateway serves). ownerID must already
+// be that form — an exchanged token's subject is, and a bare key is hashed by
+// the caller — and it is the only candidate. Hashing it here as well hashed an
+// exchanged token's subject a second time, so a key presented as a token held
+// no grant, and the CLI, which sends key management a token rather than the
+// key, was refused on every owned route (change-975).
 //
 // Wallets are stored normalised (auth.NormalizeWallet), but rows written before
 // that was true kept whatever case the client sent — so a checksummed address
@@ -1554,10 +1656,7 @@ func loggableOwnerID(ownerType, ownerID string) string {
 // working until migration 042 has run everywhere.
 //
 // For every other owner type the value is used as-is.
-func principalIdentifierCandidates(ownerType, ownerID, hashed string) []string {
-	if ownerType == "api_key" {
-		return []string{hashed}
-	}
+func principalIdentifierCandidates(ownerType, ownerID string) []string {
 	if ownerType == "wallet" {
 		if normalized := auth.NormalizeWallet(ownerID); normalized != ownerID {
 			return []string{normalized, ownerID}
@@ -1792,7 +1891,9 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 	//      (presence of relevant query params, headers we care about,
 	//      and the actor IP). Logged at debug level for success and
 	//      warn for the reject path so steady-state noise stays low.
-	if authErr != "" && !isPublic {
+	// A revoked device's token is refused on a public route too
+	// (refuseRevokedToken says why).
+	if authErr != "" && (!isPublic || authErr == deviceRevokedMessage) {
 		if isWS {
 			g.logger.ComponentWarn(logging.ComponentGeneral,
 				"namespace-proxy WS upgrade rejected: auth error",
@@ -1810,11 +1911,7 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 				zap.String("user_agent", r.Header.Get("User-Agent")),
 			)
 		}
-		if authErr == authUnavailableMessage {
-			unavailable(w, CodeAuthUnavailable, authErr)
-			return
-		}
-		unauthorized(w, namespaceProxyAuthCode(authErr), authErr, nil)
+		g.refuseProxyCredential(w, r, authErr, validatedClaims)
 		return
 	}
 
@@ -1842,6 +1939,12 @@ func (g *Gateway) proxyToNamespaceGateway(w http.ResponseWriter, r *http.Request
 			zap.Int("raw_query_len", len(r.URL.RawQuery)),
 		)
 		unauthorized(w, CodeAuthMissing, "no credential was presented", nil)
+		return
+	}
+
+	// A pending device's session goes no further than this gateway on a route
+	// that does not admit it.
+	if !g.admitsPendingDevice(w, r, validatedClaims) {
 		return
 	}
 

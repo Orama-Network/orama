@@ -353,6 +353,22 @@ func (m *MockHostServices) GetCallerAttestationVerdict(ctx context.Context) stri
 	return ""
 }
 
+func (m *MockHostServices) GetCallerDeviceState(ctx context.Context) string {
+	return ""
+}
+
+func (m *MockHostServices) ApproveDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
+func (m *MockHostServices) DenyDevice(ctx context.Context, subject, device string) error {
+	return nil
+}
+
+func (m *MockHostServices) DenyDeviceWithEvidence(ctx context.Context, subject, device, evidence string) error {
+	return nil
+}
+
 func (m *MockHostServices) GetCallerCapability(ctx context.Context) string {
 	return ""
 }
@@ -370,6 +386,10 @@ func (m *MockHostServices) MintStorageFetchCaps(ctx context.Context, cid string,
 }
 
 func (m *MockHostServices) WebRTCAdmit(ctx context.Context, room, user, device string, ttl time.Duration) (string, error) {
+	return "", nil
+}
+
+func (m *MockHostServices) WebRTCAdmitWithMutes(ctx context.Context, room, user, device string, ttl time.Duration, mutes WebRTCMutes) (string, error) {
 	return "", nil
 }
 

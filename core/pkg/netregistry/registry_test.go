@@ -132,7 +132,7 @@ func TestEmbedded_matchesPublishedNetworks(t *testing.T) {
 	if _, err := Embedded(); err != nil {
 		t.Fatalf("the embedded registry does not load: %v", err)
 	}
-	published := filepath.Join("..", "..", "..", "networks")
+	published := filepath.Join("..", "..", "testdata", "repo", "networks")
 	if _, err := os.Stat(published); err != nil {
 		t.Fatalf("the repository's networks/ directory is missing: %v", err)
 	}

@@ -33,6 +33,15 @@ const (
 	// refused; the client has to sign in again.
 	CloseRevoked = 4403
 
+	// CloseDeviceRevoked is the close code for a token-opened socket whose
+	// token was refused because the device it is bound to was revoked
+	// (feat-976). A close frame's reason holds at most 123 bytes, and a
+	// device's revocation with its proof does not fit, so the frame says only
+	// that: the client reads the revocation from the 403 DEVICE_REVOKED any
+	// request with the same token answers (GET /v1/auth/whoami, or the
+	// upgrade again), or its next sign-in, and checks it before it acts.
+	CloseDeviceRevoked = 4410
+
 	// CloseUnavailable is the close code for a socket the gateway could not
 	// check against the revocation list for longer than maxUncheckedSocketAge.
 	// The session is not known to be revoked; reconnecting is right, and is
@@ -44,6 +53,9 @@ const (
 	ReasonExpired     = "token expired; reconnect with a fresh token"
 	ReasonRevoked     = "session revoked; sign in again"
 	ReasonUnavailable = "cannot check this session right now; reconnect shortly"
+
+	// ReasonDeviceRevoked is the CloseDeviceRevoked reason.
+	ReasonDeviceRevoked = "device revoked; any request with this token answers DEVICE_REVOKED with its revocation"
 
 	// ReasonKeyRevoked is the CloseRevoked reason of a socket opened with an
 	// API key that was revoked.
@@ -97,6 +109,10 @@ type Denier interface {
 	// RevokedKey answers the same for a socket opened with a bare API key,
 	// by the key's registry id.
 	RevokedKey(id int64) (bool, error)
+	// DeviceRevoked reports, for a token Revoked refused, whether it was
+	// refused because its device was revoked. It reads the copy of the list
+	// Revoked just checked.
+	DeviceRevoked(claims *auth.JWTClaims) bool
 }
 
 // Gate re-judges an open socket against its namespace's device attestation
@@ -148,12 +164,25 @@ func (r *Registry) SetGate(g Gate) { r.gate = g }
 //
 // The claims are copied: the caller's may be request-scoped.
 func (r *Registry) Register(claims *auth.JWTClaims, closeFn Closer) *Socket {
+	return r.register(claims, closeFn, false)
+}
+
+// RegisterCapability starts holding a socket opened with a capability to the
+// capability's revocation claims (capability.Claims.RevocationClaims): it
+// closes when the capability, or the device that issued it, is revoked, with
+// CloseRevoked, since its holder is not that device.
+func (r *Registry) RegisterCapability(claims *auth.JWTClaims, closeFn Closer) *Socket {
+	return r.register(claims, closeFn, true)
+}
+
+// register builds the socket whole before a sweep can see it.
+func (r *Registry) register(claims *auth.JWTClaims, closeFn Closer, capability bool) *Socket {
 	if claims == nil || closeFn == nil {
 		return nil
 	}
 	// The upgrade checked the token against the list, so the socket starts out
 	// checked.
-	s := &Socket{registry: r, claims: *claims, close: closeFn, checkedAt: r.now()}
+	s := &Socket{registry: r, claims: *claims, close: closeFn, checkedAt: r.now(), capability: capability}
 
 	r.add(s)
 	return s
@@ -250,7 +279,8 @@ func (r *Registry) judgeLive(live []*Socket, now time.Time, d Denier) []closeJob
 			if err == nil {
 				s.markChecked(now)
 				if revoked {
-					jobs = append(jobs, closeJob{s, claims, CloseRevoked, s.revokedReason()})
+					code, reason := s.revokedClose(d, &claims)
+					jobs = append(jobs, closeJob{s, claims, code, reason})
 				} else if code := r.attestationRefusal(s, &claims, now); code != "" {
 					jobs = append(jobs, closeJob{s, claims, CloseRevoked, code})
 				}
@@ -370,6 +400,10 @@ type Socket struct {
 	// keyID is the registry id of the API key a key-opened socket was opened
 	// with, 0 for a socket opened with a token or a capability.
 	keyID int64
+	// capability is a socket opened with a capability: its claims are the
+	// capability's, naming the device that issued it, not a device the
+	// holder is.
+	capability bool
 
 	mu     sync.Mutex
 	claims auth.JWTClaims
@@ -409,12 +443,18 @@ func (s *Socket) attestationNS() string {
 	return s.attestationNamespace
 }
 
-// revokedReason is the close reason of a socket whose credential was revoked.
-func (s *Socket) revokedReason() string {
-	if s.keyID > 0 {
-		return ReasonKeyRevoked
+// revokedClose is the close code and reason of a socket whose credential was
+// revoked. A token-opened socket whose device was revoked is told so
+// (CloseDeviceRevoked); a capability's socket is not, because its holder is
+// the correspondent the device handed it to, not the device.
+func (s *Socket) revokedClose(d Denier, claims *auth.JWTClaims) (int, string) {
+	switch {
+	case s.keyID > 0:
+		return CloseRevoked, ReasonKeyRevoked
+	case !s.capability && d.DeviceRevoked(claims):
+		return CloseDeviceRevoked, ReasonDeviceRevoked
 	}
-	return ReasonRevoked
+	return CloseRevoked, ReasonRevoked
 }
 
 func (s *Socket) markChecked(at time.Time) {
